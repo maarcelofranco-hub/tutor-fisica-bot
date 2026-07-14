@@ -1,0 +1,236 @@
+import io
+import json
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+
+from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+
+from app.config import settings
+from app.models.schemas import Question
+from app.utils.text import labels_match, normalize_label
+
+logger = logging.getLogger(__name__)
+
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+
+@dataclass
+class DriveFile:
+    id: str
+    name: str
+    mime_type: str
+
+
+class DriveService:
+    IMAGE_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+    PDF_MIME = "application/pdf"
+
+    def __init__(self) -> None:
+        self.root_folder_id = settings.google_drive_root_folder_id
+        self.themes_folder_name = settings.drive_themes_folder_name
+        self.service = self._build_service()
+        self._folder_cache: dict[str, str] = {}
+
+    @property
+    def is_configured(self) -> bool:
+        return self.service is not None and bool(self.root_folder_id)
+
+    def _build_service(self):
+        credentials = self._load_service_account_credentials()
+        if credentials is None:
+            credentials = self._load_oauth_credentials()
+        if credentials is None:
+            return None
+        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+    def _load_service_account_credentials(self):
+        if settings.google_service_account_json.strip():
+            try:
+                info = json.loads(settings.google_service_account_json)
+                return service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+            except json.JSONDecodeError:
+                logger.error("GOOGLE_SERVICE_ACCOUNT_JSON is invalid JSON")
+                return None
+
+        credentials_path = Path(settings.google_service_account_file)
+        if credentials_path.exists():
+            return service_account.Credentials.from_service_account_file(
+                str(credentials_path),
+                scopes=DRIVE_SCOPES,
+            )
+        return None
+
+    def _load_oauth_credentials(self):
+        token_path = Path(settings.google_oauth_token_file)
+        if not token_path.exists():
+            logger.warning("Google OAuth token not found: %s", token_path)
+            return None
+        credentials = Credentials.from_authorized_user_file(str(token_path), DRIVE_SCOPES)
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            token_path.write_text(credentials.to_json(), encoding="utf-8")
+        if not credentials.valid:
+            logger.warning("Google OAuth token is invalid. Run authorize_google_drive.py")
+            return None
+        return credentials
+
+    def refresh_cache(self) -> None:
+        self._folder_cache.clear()
+
+    def list_topics(self) -> list[str]:
+        if not self.is_configured:
+            return []
+        folders = self._list_child_folders(self.root_folder_id)
+        reserved = normalize_label(self.themes_folder_name)
+        return sorted(
+            folder.name
+            for folder in folders
+            if normalize_label(folder.name) != reserved
+        )
+
+    def list_questions(self, topic: str) -> list[Question]:
+        if not self.is_configured:
+            return []
+        topic_folder_id = self._find_topic_folder_id(topic)
+        if not topic_folder_id:
+            return []
+
+        response = (
+            self.service.files()
+            .list(
+                q=(
+                    f"'{topic_folder_id}' in parents and trashed=false and "
+                    "mimeType contains 'image/'"
+                ),
+                fields="files(id, name, mimeType, webContentLink)",
+                orderBy="name",
+                pageSize=200,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+
+        questions: list[Question] = []
+        for item in response.get("files", []):
+            if item.get("mimeType") not in self.IMAGE_MIME_TYPES:
+                continue
+            questions.append(
+                Question(
+                    id=item["id"],
+                    name=item["name"],
+                    topic=self._resolve_topic_name(topic),
+                    image_url=item.get("webContentLink"),
+                    mime_type=item.get("mimeType", "image/jpeg"),
+                )
+            )
+        return questions
+
+    def get_question_image(self, question_id: str) -> tuple[bytes, str]:
+        if not self.service:
+            raise RuntimeError("Google Drive is not configured.")
+        return self._download_file(question_id)
+
+    def get_themes_menu_file(self) -> DriveFile | None:
+        if not self.is_configured:
+            return None
+        themes_folder_id = self._find_folder_by_name(self.root_folder_id, self.themes_folder_name)
+        if not themes_folder_id:
+            logger.warning("Themes folder '%s' not found on Drive", self.themes_folder_name)
+            return None
+
+        response = (
+            self.service.files()
+            .list(
+                q=f"'{themes_folder_id}' in parents and trashed=false",
+                fields="files(id, name, mimeType)",
+                orderBy="name",
+                pageSize=50,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+        files = response.get("files", [])
+        for item in files:
+            if item.get("mimeType") == self.PDF_MIME:
+                return DriveFile(id=item["id"], name=item["name"], mime_type=self.PDF_MIME)
+        for item in files:
+            mime = item.get("mimeType", "")
+            if mime.startswith("image/"):
+                return DriveFile(id=item["id"], name=item["name"], mime_type=mime)
+        return None
+
+    def download_file(self, file_id: str) -> tuple[bytes, str]:
+        return self._download_file(file_id)
+
+    def topic_exists(self, topic: str) -> bool:
+        return self._find_topic_folder_id(topic) is not None
+
+    def _download_file(self, file_id: str) -> tuple[bytes, str]:
+        metadata = self.service.files().get(
+            fileId=file_id,
+            fields="mimeType,name",
+            supportsAllDrives=True,
+        ).execute()
+        request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        mime_type = metadata.get("mimeType", "application/octet-stream")
+        return buffer.getvalue(), mime_type
+
+    def _list_child_folders(self, parent_id: str) -> list[DriveFile]:
+        response = (
+            self.service.files()
+            .list(
+                q=(
+                    f"'{parent_id}' in parents and "
+                    "mimeType='application/vnd.google-apps.folder' and trashed=false"
+                ),
+                fields="files(id, name, mimeType)",
+                orderBy="name",
+                pageSize=200,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+        return [
+            DriveFile(id=item["id"], name=item["name"], mime_type=item.get("mimeType", ""))
+            for item in response.get("files", [])
+        ]
+
+    def _find_topic_folder_id(self, topic: str) -> str | None:
+        return self._find_folder_by_name(self.root_folder_id, topic, exclude_themes=True)
+
+    def _find_folder_by_name(
+        self,
+        parent_id: str,
+        folder_name: str,
+        exclude_themes: bool = False,
+    ) -> str | None:
+        cache_key = f"{parent_id}:{folder_name}:{exclude_themes}"
+        if cache_key in self._folder_cache:
+            return self._folder_cache[cache_key]
+
+        for folder in self._list_child_folders(parent_id):
+            if exclude_themes and labels_match(folder.name, self.themes_folder_name):
+                continue
+            if labels_match(folder.name, folder_name):
+                self._folder_cache[cache_key] = folder.id
+                return folder.id
+        return None
+
+    def _resolve_topic_name(self, topic: str) -> str:
+        for name in self.list_topics():
+            if labels_match(name, topic):
+                return name
+        return topic.strip()
