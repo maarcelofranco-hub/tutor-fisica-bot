@@ -1,11 +1,11 @@
-fastapi>=0.115.0
+Fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 httpx>=0.28.0
 sqlalchemy>=2.0.36
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
-google-generativeai>=0.8.3
+google-genai>=1.0.0
 google-api-python-client>=2.154.0
 google-auth>=2.36.0
 google-auth-httplib2>=0.2.0
