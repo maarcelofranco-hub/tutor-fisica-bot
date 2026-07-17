@@ -32,6 +32,14 @@ class ConversationService:
 
         contact = self._get_or_create_contact(db, message)
         session = self._get_or_create_session(db, contact)
+        
+        # --- FILTRO DE CUMPRIMENTOS (REINICIA O BOT) ---
+        msg_text = (message.text or "").lower().strip()
+        if msg_text in ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "menu", "reset", "inicio"]:
+            await self._reset_to_topic_selection(db, session)
+            return
+        # -----------------------------------------------
+
         logger.info(
             "IN  [%s] state=%s text=%s",
             contact.phone,
