@@ -161,4 +161,33 @@ class GeminiService:
         if settings.gemini_correction_style.lower() != "detailed":
             return feedback
 
-        result_label = "Correto ✅" if is
+        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📊 RESULTADO: {result_label}",
+            "",
+            "📝 Sua resposta:",
+            student_answer.strip() or "(nao informada)",
+            "",
+        ]
+
+        if not is_correct and error:
+            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
+
+        if correct_answer:
+            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
+
+        if tip:
+            lines.extend(["💡 Dica:", str(tip).strip(), ""])
+
+        if steps:
+            lines.append("📖 Passo a passo:")
+            for index, step in enumerate(steps, start=1):
+                lines.append(f"{index}. {str(step).strip()}")
+            lines.append("")
+
+        if feedback and (is_correct or not error):
+            lines.extend(["📚 Comentario:", feedback.strip(), ""])
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        return "\n".join(lines).strip()
