@@ -4,7 +4,12 @@ import json
 
 class GeminiService:
     def __init__(self):
-        genai.configure(api_key=settings.gemini_api_key)
+        # Configuração forçada da API para usar o endpoint estável v1
+        # Isso impede que a biblioteca tente buscar o endpoint v1beta automaticamente
+        genai.configure(
+            api_key=settings.gemini_api_key,
+            api_endpoint="https://generativelanguage.googleapis.com"
+        )
         
         self.system_instruction = """
 Você é um tutor de Física dedicado, didático e profissional. 
@@ -19,8 +24,7 @@ Ao apresentar a resolução de problemas de física, utilize sempre o seguinte m
 Use Markdown para destacar fórmulas (ex: use crases).
 """
         
-        # Usamos o caminho completo do modelo para forçar a rota correta da API (v1)
-        # Isso evita que a biblioteca tente buscar o endpoint v1beta automaticamente
+        # Nome do modelo com prefixo 'models/' para forçar o caminho estável
         self.model = genai.GenerativeModel(
             model_name="models/gemini-1.5-flash",
             system_instruction=self.system_instruction,
@@ -41,16 +45,16 @@ Use Markdown para destacar fórmulas (ex: use crases).
                 prompt
             ])
             
-            # Removemos caracteres de formatação Markdown caso venham no início/fim
+            # Limpeza básica do texto retornado pelo modelo
             raw_text = response.text.replace('```json', '').replace('```', '').strip()
             data = json.loads(raw_text)
             
-            # Validação: garante que o JSON tenha as chaves necessárias antes de retornar
+            # Validação de segurança para garantir que o dicionário tenha os campos esperados
             if isinstance(data, dict) and 'feedback' in data:
                 return data
             else:
                 return {"is_correct": False, "feedback": "Erro de formato", "explanation": "A resposta não está no formato correto."}
         
         except Exception as e:
-            print(f"Erro na execução: {e}")
-            return {"is_correct": False, "feedback": "Erro interno", "explanation": "Tente novamente."}
+            print(f"Erro na execução da chamada Gemini: {e}")
+            return {"is_correct": False, "feedback": "Erro interno", "explanation": "Tente novamente em breve."}
