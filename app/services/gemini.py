@@ -186,7 +186,7 @@ class GeminiService:
             lines.append("📖 Passo a passo:")
             for index, step in enumerate(steps, start=1):
                 lines.append(f"{index}. {str(step).strip()}")
-            lines.append("")
+                lines.append("") # <--- Esta é a linha que adiciona o respiro entre os passos!
 
         if feedback and (is_correct or not error):
             lines.extend(["📚 Comentario:", feedback.strip(), ""])
