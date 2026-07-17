@@ -16,8 +16,15 @@ class GeminiService:
     def __init__(self) -> None:
         self.enabled = bool(settings.gemini_api_key)
         if self.enabled:
+            # Configuração da API
             genai.configure(api_key=settings.gemini_api_key)
-            self.model = genai.GenerativeModel(settings.gemini_model)
+            
+            # Garante que o modelo use o prefixo 'models/' para evitar o erro 404 de endpoint
+            model_name = settings.gemini_model
+            if not model_name.startswith("models/"):
+                model_name = f"models/{model_name}"
+                
+            self.model = genai.GenerativeModel(model_name)
         else:
             self.model = None
             logger.warning("GEMINI_API_KEY not set. Using mock correction mode.")
@@ -96,22 +103,27 @@ class GeminiService:
             )
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
+        # Reforço crítico para garantir que a IA respeite estritamente o gabarito oficial
         key_section = (
-            f"Gabarito cadastrado: {answer_key}"
+            f"GABARITO OFICIAL: {answer_key}. \nATENÇÃO MÁXIMA: A sua correção DEVE corresponder exata e estritamente a este gabarito oficial. Sob nenhuma hipótese forneça uma correção que discorde desta chave de resposta."
             if answer_key
-            else "Nao ha gabarito cadastrado. Resolva a questao a partir do enunciado."
+            else "Nao ha gabarito cadastrado. Resolva a questao a partir do enunciado com extrema precisão técnica."
         )
+        
         return (
-            "Voce e um professor de Fisica do ensino medio corrigindo a resposta de um aluno brasileiro.\n"
+            "Voce e um professor de Fisica do ensino medio corrigindo a resposta de um aluno brasileiro no WhatsApp.\n"
             f"{key_section}\n"
             f"Resposta do aluno: {student_answer}\n\n"
-            "Instrucoes:\n"
-            "- Responda em portugues brasileiro, tom didatico e claro.\n"
-            "- Seja detalhado, com passos numerados quando util.\n"
+            "Instrucoes CRÍTICAS de formatação:\n"
+            "- Responda em portugues brasileiro, tom didatico e encorajador.\n"
+            "- No campo 'steps', seja EXTREMAMENTE conciso. Crie passos curtos e diretos, focados na Física.\n"
+            "- PROIBIDO explicar matemática básica em texto (ex: não explique como fazer MMC ou frações). Apenas mostre a evolução algébrica da fórmula.\n"
+            "- Use formatação do WhatsApp: coloque fórmulas e valores finais entre asteriscos para ficar em negrito (ex: *1/f = 1/p + 1/p'*).\n"
+            "- Estruture assim: 1) Dados, 2) Fórmula, 3) Substituição e isolamento, 4) Resposta final com unidade de medida.\n"
             "- Retorne APENAS JSON valido com os campos:\n"
             '  {"is_correct": true|false, "feedback": "texto curto", "error": "onde errou ou null", '
             '"correct_answer": "resposta correta", "tip": "dica objetiva", '
-            '"steps": ["passo 1", "passo 2"]}\n'
+            '"steps": ["passo curto 1", "passo curto 2"]}\n'
         )
 
     def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
@@ -149,33 +161,4 @@ class GeminiService:
         if settings.gemini_correction_style.lower() != "detailed":
             return feedback
 
-        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
-        lines = [
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"📊 RESULTADO: {result_label}",
-            "",
-            "📝 Sua resposta:",
-            student_answer.strip() or "(nao informada)",
-            "",
-        ]
-
-        if not is_correct and error:
-            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
-
-        if correct_answer:
-            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
-
-        if tip:
-            lines.extend(["💡 Dica:", str(tip).strip(), ""])
-
-        if steps:
-            lines.append("📖 Passo a passo:")
-            for index, step in enumerate(steps, start=1):
-                lines.append(f"{index}. {str(step).strip()}")
-            lines.append("")
-
-        if feedback and (is_correct or not error):
-            lines.extend(["📚 Comentario:", feedback.strip(), ""])
-
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        return "\n".join(lines).strip()
+        result_label = "Correto ✅" if is
