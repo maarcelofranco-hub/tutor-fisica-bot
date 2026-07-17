@@ -44,6 +44,10 @@ class GeminiService:
         return self._parse_response(response.text or "", student_answer)
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
+        # Se o aluno apenas confirmou, pedimos ao modelo para ser apenas um assistente amigável
+        if student_answer.lower() in ["sim", "quero", "outra", "próxima", "sim, quero"]:
+            return "O aluno deseja continuar. Apenas responda de forma curta e amigável confirmando que enviará uma nova questão do mesmo tema."
+
         return f"""
         Você é um professor de física renomado. Avalie: '{student_answer}'. Gabarito: '{answer_key}'.
         
@@ -77,7 +81,10 @@ class GeminiService:
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
         try:
-            # Re.DOTALL permite que o JSON contenha quebras de linha (\n) sem quebrar o parse
+            # Caso o modelo tenha respondido apenas texto amigável (por causa do "Sim")
+            if not response_text.strip().startswith("{"):
+                return CorrectionResult(is_correct=True, feedback=response_text.strip(), explanation=None)
+                
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group(0))
