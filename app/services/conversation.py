@@ -133,6 +133,7 @@ class ConversationService:
         )
 
         feedback = correction.feedback
+        explanation = correction.explanation or ""
 
         db.add(
             StudentProgress(
@@ -148,7 +149,12 @@ class ConversationService:
         session.state = ConversationState.AWAITING_CONTINUE.value
         db.commit()
 
-        await self.messages.send_text(contact.phone, feedback)
+        # Envia feedback + explicação formatada
+        full_message = f"{feedback}"
+        if explanation:
+            full_message += f"\n\n{explanation}"
+            
+        await self.messages.send_text(contact.phone, full_message)
         await self.messages.send_text(contact.phone, settings.continue_question_message)
 
     async def _handle_continue_decision(
