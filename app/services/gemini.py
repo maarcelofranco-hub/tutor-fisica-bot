@@ -1,103 +1,52 @@
-import json
-import logging
-import re
-from google import genai
+import google.generativeai as genai
 from app.config import settings
-from app.models.schemas import CorrectionResult
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-logger = logging.getLogger(__name__)
+import json
 
 class GeminiService:
-    def __init__(self) -> None:
-        self.enabled = bool(settings.gemini_api_key)
-        self.model_name = settings.gemini_model
-
-    def _get_client(self):
-        return genai.Client(api_key=settings.gemini_api_key)
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def correct_answer(
-        self,
-        question_image_bytes: bytes | None,
-        question_mime_type: str,
-        student_answer: str,
-        answer_key: str | None = None,
-    ) -> CorrectionResult:
-        if not self.enabled:
-            return CorrectionResult(is_correct=True, feedback="[Modo teste]", explanation=None)
-
-        client = self._get_client()
-        prompt = self._build_prompt(student_answer, answer_key)
+    def __init__(self):
+        genai.configure(api_key=settings.gemini_api_key)
         
-        contents = [prompt]
-        if question_image_bytes:
-            contents.append({
-                "inline_data": {"data": question_image_bytes, "mime_type": question_mime_type}
-            })
+        # Esta é a instrução que dita o comportamento didático do seu tutor
+        self.system_instruction = """
+Você é um tutor de Física dedicado, didático e profissional. 
+Sua missão é corrigir as respostas dos alunos com base em imagens de questões e textos.
 
-        response = client.models.generate_content(
-            model=self.model_name, 
-            contents=contents,
-            config={"temperature": 0.1}
+Ao apresentar a resolução de problemas de física, utilize sempre o seguinte método:
+1. Primeiro, identifique e converta as unidades necessárias para o Sistema Internacional.
+2. Substitua os valores numéricos conhecidos diretamente na fórmula original.
+3. Em seguida, realize o isolamento algébrico da incógnita desejada.
+4. Apresente o resultado final claramente com as unidades de medida corretas.
+
+Use Markdown para destacar fórmulas e resultados (ex: use crases para fórmulas). 
+Não utilize caracteres de escape como literal '\\n' na sua resposta JSON, 
+pois o sistema fará o processamento necessário.
+"""
+        
+        # Configuração do modelo (usando o Flash conforme recomendado)
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=self.system_instruction,
+            generation_config={"response_mime_type": "application/json"}
         )
-        return self._parse_response(response.text or "", student_answer)
 
-    def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
-        # Se o aluno apenas confirmou, pedimos ao modelo para ser apenas um assistente amigável
-        if student_answer.lower() in ["sim", "quero", "outra", "próxima", "sim, quero"]:
-            return "O aluno deseja continuar. Apenas responda de forma curta e amigável confirmando que enviará uma nova questão do mesmo tema."
-
-        return f"""
-        Você é um professor de física renomado. Avalie: '{student_answer}'. Gabarito: '{answer_key}'.
+    async def correct_answer(self, question_image_bytes, question_mime_type, student_answer):
+        # Definição da estrutura JSON que o seu código espera
+        prompt = f"""
+        Analise a questão na imagem e a resposta do aluno abaixo.
+        Resposta do aluno: {student_answer}
         
-        Se a resposta estiver incorreta, forneça a resolução seguindo estas regras estritas:
-        
-        1. FORMATAÇÃO: Use um ponto final antes de títulos (ex: .Equacionamento). Pule UMA LINHA entre cada linha de cálculo.
-        
-        2. ESTILO "LIVRO DIDÁTICO":
-           - NÃO explique cada passo algébrico (evite frases como "multiplicamos por", "cancelamos").
-           - Apenas apresente as equações organizadas verticalmente.
-           - Use o padrão brasileiro: vírgula (,) para decimais e ponto (.) para multiplicação.
-           - Use apenas números na substituição.
-           
-        3. NOTAÇÃO:
-           - Use "√" para raiz e "²" para potência.
-           - NÃO use 'sqrt' ou '^2'.
-           
-        4. EXEMPLO DE SAÍDA (Siga este formato):
-           .Equacionamento
-           g . h = 0,5 . v²
-           
-           .Substituição
-           10 . 2,45 = 0,5 . v²
-           24,5 = 0,5 . v²
-           v² = 49
-           v = √49
-           v = 7 m/s
-        
-        Retorne APENAS um objeto JSON com as chaves: "is_correct" (boolean), "feedback" (string curta), "explanation" (resolução formatada).
+        Retorne um JSON com a seguinte estrutura:
+        {{
+            "is_correct": boolean,
+            "feedback": "Mensagem curta de correção",
+            "explanation": "Explicação detalhada seguindo a metodologia didática definida nas instruções do sistema"
+        }}
         """
 
-    def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
-        try:
-            # Caso o modelo tenha respondido apenas texto amigável (por causa do "Sim")
-            if not response_text.strip().startswith("{"):
-                return CorrectionResult(is_correct=True, feedback=response_text.strip(), explanation=None)
-                
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
-                return CorrectionResult(
-                    is_correct=data.get("is_correct", False),
-                    feedback=data.get("feedback", "Revise os cálculos."),
-                    explanation=data.get("explanation", "")
-                )
-            raise ValueError("Bloco JSON não encontrado.")
-        except Exception as e:
-            logger.error(f"Erro ao processar JSON: {e} | Resposta bruta: {response_text}")
-            return CorrectionResult(
-                is_correct=False, 
-                feedback="Erro ao processar a correção.", 
-                explanation=response_text
-            )
+        response = await self.model.generate_content_async([
+            {"mime_type": question_mime_type, "data": question_image_bytes},
+            prompt
+        ])
+        
+        # Converte a resposta JSON em um objeto Python
+        return json.loads(response.text)
