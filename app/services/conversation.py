@@ -190,24 +190,30 @@ class ConversationService:
     async def _send_topic_menu(self, phone: str, send_welcome: bool = True) -> None:
         self.questions.refresh()
         temas = self.questions.list_topics()
-        categorias = {
-            "Mecânica": ["Energia Mecanica", "Queda Livre", "Lançamento horizontal", "Movimento Uniforme Variado", "Aceleração centripeta"],
-            "Eletricidade": ["Corrente Eletrica", "Consumo Energia Elétrica"],
-            "Termodinâmica": ["Calor específico", "Calor latente", "Equilíbrio Térmico"],
-            "Óptica": ["Espelhos Esféricos"]
-        }
+        
+        menu_organizado = {}
+        
+        for tema in temas:
+            if "-" in tema:
+                partes = tema.split("-", 1)
+                area = partes[0].strip()
+                nome_tema = partes[1].strip()
+            else:
+                area = "OUTROS"
+                nome_tema = tema
+            
+            area = area.upper()
+            if area not in menu_organizado:
+                menu_organizado[area] = []
+            menu_organizado[area].append(nome_tema)
+        
         msg = "🍎 *Olá! Sou seu tutor de Física.*\n\nEscolha um tema por área para começar:\n"
-        for area, temas_area in categorias.items():
-            temas_validos = [t for t in temas_area if t in temas]
-            if temas_validos:
-                msg += f"\n*• {area.upper()}*\n"
-                for t in sorted(temas_validos):
-                    msg += f"🔹 {t}\n"
-        outros = [t for t in temas if not any(t in lista for lista in categorias.values())]
-        if outros:
-            msg += "\n*• OUTROS*\n"
-            for t in sorted(outros):
+        
+        for area in sorted(menu_organizado.keys()):
+            msg += f"\n*• {area}*\n"
+            for t in sorted(menu_organizado[area]):
                 msg += f"🔹 {t}\n"
+                
         msg += "\nQual tema você quer estudar agora?"
         await self.messages.send_text(phone, msg)
 
