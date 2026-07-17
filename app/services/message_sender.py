@@ -6,6 +6,9 @@ from app.services.whatsapp import WhatsAppService
 logger = logging.getLogger(__name__)
 
 class MessageSender:
+    # Cache em memória para IDs do WhatsApp
+    _media_cache: dict[str, str] = {}
+
     def __init__(self) -> None:
         self.whatsapp = WhatsAppService()
 
@@ -22,7 +25,7 @@ class MessageSender:
         mime_type: str,
         caption: str,
         image_url: str | None = None,
-        question_id: str = None  # ID do arquivo no Drive para cache
+        question_id: str = None
     ) -> None:
         outbox.add_image(phone, caption, caption=caption)
         logger.info("OUT [%s] image: %s", phone, caption)
@@ -30,20 +33,23 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
-        # Lógica de Media ID:
-        # 1. Se tivermos o question_id, verificamos se temos um media_id salvo
-        # 2. Se tivermos media_id, usamos self.whatsapp.send_image_by_id(phone, media_id, caption)
-        # 3. Caso contrário, fazemos o upload original:
-        
-        response = await self.whatsapp.send_image_bytes(phone, image_bytes, mime_type, caption=caption)
-        
-        # 4. Se o WhatsApp retornar um novo ID, salvamos no banco (próximo passo)
-        if response and "media_id" in response:
-            self._save_media_id(question_id, response["media_id"])
+        # 1. TENTA USAR O CACHE
+        if question_id and question_id in self._media_cache:
+            logger.info("Usando CACHE de media_id para a questão %s", question_id)
+            await self.whatsapp.send_image_by_id(phone, self._media_cache[question_id], caption=caption)
+            return
 
-    def _save_media_id(self, question_id: str, media_id: str):
-        # Aqui você chamará sua função de banco de dados para salvar o ID
-        logger.info(f"Cache de media_id criado para {question_id}: {media_id}")
+        # 2. SE NÃO TEM CACHE, FAZ O UPLOAD E GUARDA
+        logger.info("Realizando UPLOAD da imagem para o WhatsApp...")
+        media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
+        
+        # Envia usando o ID que acabou de receber
+        await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
+        
+        # 3. SALVA NO CACHE
+        if question_id:
+            self._media_cache[question_id] = media_id
+            logger.info("Media ID %s salvo no cache para a questão %s", media_id, question_id)
 
     async def send_document(
         self,
@@ -60,6 +66,7 @@ class MessageSender:
 
     async def send_themes_menu(self, phone: str) -> bool:
         from app.services.question_provider import question_provider
+
         menu_file = question_provider.get_themes_menu_file()
         if not menu_file:
             return False
@@ -73,6 +80,12 @@ class MessageSender:
             return True
             
         if mime_type.startswith("image/"):
-            await self.send_question_image(phone, file_bytes, mime_type, instruction, question_id=menu_file.id)
+            await self.send_question_image(
+                phone=phone,
+                image_bytes=file_bytes,
+                mime_type=mime_type,
+                caption=instruction,
+                question_id=menu_file.id
+            )
             return True
         return False
