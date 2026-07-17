@@ -114,16 +114,18 @@ class GeminiService:
             "Voce e um professor de Fisica do ensino medio corrigindo a resposta de um aluno brasileiro no WhatsApp.\n"
             f"{key_section}\n"
             f"Resposta do aluno: {student_answer}\n\n"
-            "Instrucoes CRÍTICAS de formatação:\n"
-            "- Responda em portugues brasileiro, tom didatico e encorajador.\n"
-            "- No campo 'steps', seja EXTREMAMENTE conciso. Crie passos curtos e diretos, focados na Física.\n"
-            "- PROIBIDO explicar matemática básica em texto (ex: não explique como fazer MMC ou frações). Apenas mostre a evolução algébrica da fórmula.\n"
-            "- Use formatação do WhatsApp: coloque fórmulas e valores finais entre asteriscos para ficar em negrito (ex: *1/f = 1/p + 1/p'*).\n"
-            "- Estruture assim: 1) Dados, 2) Fórmula, 3) Substituição e isolamento, 4) Resposta final com unidade de medida.\n"
+            "Instrucoes CRÍTICAS de formatação para WhatsApp:\n"
+            "- Responda em portugues brasileiro, tom didatico e direto.\n"
+            "- No campo 'steps', NÃO coloque números no início das frases (ex: não escreva '1)', '2)'). O sistema já enumera automaticamente.\n"
+            "- Abrevie os subscritos para não poluir a tela. Use 'm_p' em vez de 'm_pessoa', 'c_a' em vez de 'c_agua', etc.\n"
+            "- Matemática padrão BR: use vírgula para decimais (ex: 6,72) e ponto para multiplicação (ex: 200 . 4). NUNCA use asterisco (*) para multiplicar.\n"
+            "- Use o símbolo Δ para variações (ex: ΔT).\n"
+            "- Use asteriscos APENAS para deixar o texto em negrito no WhatsApp (ex: *Q = m . c . ΔT*).\n"
+            "- PROIBIDO explicar matemática básica em texto. Apenas mostre a evolução algébrica passo a passo.\n"
             "- Retorne APENAS JSON valido com os campos:\n"
             '  {"is_correct": true|false, "feedback": "texto curto", "error": "onde errou ou null", '
             '"correct_answer": "resposta correta", "tip": "dica objetiva", '
-            '"steps": ["passo curto 1", "passo curto 2"]}\n'
+            '"steps": ["Dados: m_p = 80000 g, c_p = 0,84...", "Fórmula: *Q_p + Q_a = 0*", "Substituindo: *80000 . 0,84 . (-4) + ...*", "Resposta final: *T = 29,28 °C*"]}\n'
         )
 
     def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
@@ -146,48 +148,4 @@ class GeminiService:
             return CorrectionResult(is_correct=is_correct, feedback=feedback, explanation=None)
         except json.JSONDecodeError:
             fallback = cleaned[:900] if cleaned else "Nao foi possivel analisar a resposta."
-            return CorrectionResult(is_correct=False, feedback=fallback, explanation=None)
-
-    def _format_feedback(
-        self,
-        is_correct: bool,
-        student_answer: str,
-        feedback: str,
-        error: str | None,
-        correct_answer: str | None,
-        tip: str | None,
-        steps: list | None,
-    ) -> str:
-        if settings.gemini_correction_style.lower() != "detailed":
-            return feedback
-
-        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
-        lines = [
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"📊 RESULTADO: {result_label}",
-            "",
-            "📝 Sua resposta:",
-            student_answer.strip() or "(nao informada)",
-            "",
-        ]
-
-        if not is_correct and error:
-            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
-
-        if correct_answer:
-            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
-
-        if tip:
-            lines.extend(["💡 Dica:", str(tip).strip(), ""])
-
-        if steps:
-            lines.append("📖 Passo a passo:")
-            for index, step in enumerate(steps, start=1):
-                lines.append(f"{index}. {str(step).strip()}")
-            lines.append("")
-
-        if feedback and (is_correct or not error):
-            lines.extend(["📚 Comentario:", feedback.strip(), ""])
-
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        return "\n".join(lines).strip()
+            
