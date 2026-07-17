@@ -6,14 +6,14 @@ import base64
 class GeminiService:
     def __init__(self):
         self.api_key = settings.gemini_api_key
-        # MUDANÇA AQUI: Trocamos "v1beta" por "v1" para usar a API oficial e estável
-        self.url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={self.api_key}"
+        # Voltando para v1beta: O log provou que o Google exige essa versão para este modelo
+        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
 
     async def correct_answer(self, question_image_bytes, question_mime_type, student_answer):
-        # Converter os bytes da imagem para Base64 corretamente
+        # 1. Converte a imagem corretamente (Isso resolveu o erro do 'utf-8')
         image_base64 = base64.b64encode(question_image_bytes).decode('utf-8')
         
-        # Estrutura de dados para a API do Google
+        # 2. Prepara os dados para enviar ao Google
         payload = {
             "contents": [{
                 "parts": [
@@ -41,16 +41,17 @@ Retorne APENAS um JSON com 'is_correct', 'feedback', 'explanation'."""
 
         async with httpx.AsyncClient() as client:
             try:
+                # 3. Chama a API diretamente
                 response = await client.post(self.url, json=payload, timeout=30.0)
                 
-                # Proteção: Se o Google retornar um erro (como o 404 de antes), avisamos no log sem quebrar o bot
+                # Se o Google chiar, mostramos o erro sem quebrar seu bot
                 if response.status_code != 200:
                     print(f"Erro da API do Google: Status {response.status_code} - {response.text}")
-                    return {"is_correct": False, "feedback": "Erro na API", "explanation": "O servidor de IA está indisponível no momento."}
+                    return {"is_correct": False, "feedback": "Erro na API", "explanation": "O servidor de IA rejeitou a chamada."}
 
                 result = response.json()
                 
-                # Extraindo o texto da resposta (agora é seguro pois sabemos que deu status 200)
+                # 4. Extrai e limpa a resposta
                 text = result['candidates'][0]['content']['parts'][0]['text']
                 return json.loads(text.replace('```json', '').replace('```', '').strip())
             
