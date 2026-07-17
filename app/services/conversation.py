@@ -1,5 +1,6 @@
 import logging
 import uuid
+from difflib import SequenceMatcher
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import Contact, ConversationState, StudentProgress, StudentSession
@@ -119,7 +120,8 @@ class ConversationService:
         resolved_topic = None
         for t in topics:
             nome_limpo = t.split("-", 1)[-1].strip().lower()
-            if nome_limpo == topic_input or t.lower() == topic_input:
+            # Verifica igualdade exata ou similaridade alta (> 80%) sem usar IA
+            if nome_limpo == topic_input or t.lower() == topic_input or SequenceMatcher(None, nome_limpo, topic_input).ratio() > 0.8:
                 resolved_topic = t
                 break
         
@@ -127,7 +129,7 @@ class ConversationService:
             session.current_topic = resolved_topic
             sent = await self._send_next_question(db, contact, session)
             if not sent:
-                await self.messages.send_text(contact.phone, "Este tema ainda nao tem questoes cadastradas.")
+                await self.messages.send_text(contact.phone, "Este tema ainda não tem questões cadastradas.")
                 await self._reset_to_topic_selection(db, session, send_menu=False)
         else:
             await self.messages.send_text(contact.phone, "Não encontrei um tema relacionado ao que você digitou.")
@@ -137,32 +139,60 @@ class ConversationService:
         if not session.current_question_id:
             await self._reset_to_topic_selection(db, session)
             return
+            
         answer_text = (message.text or "").strip()
         if message.image_bytes:
             answer_text = await self.ocr.extract_text(message.image_bytes, message.media_mime_type or "image/png")
         elif message.media_id:
             media_bytes, media_mime = await self.messages.download_media(message.media_id)
             answer_text = await self.ocr.extract_text(media_bytes, media_mime)
+            
         if not answer_text:
-            await self.messages.send_text(contact.phone, "Nao consegui ler sua resposta. Envie novamente por texto ou foto mais nitida.")
+            await self.messages.send_text(contact.phone, "Não consegui ler sua resposta. Envie novamente por texto ou foto mais nítida.")
             return
+
         question_bytes, question_mime = self.questions.get_question_image(session.current_question_id)
-        correction = await self.gemini.correct_answer(question_image_bytes=question_bytes, question_mime_type=question_mime, student_answer=answer_text)
-        feedback = correction.feedback
-        explanation = correction.explanation or ""
-        db.add(StudentProgress(contact_id=contact.id, topic=session.current_topic or "", question_id=session.current_question_id, question_name=session.current_question_name or "", answer_text=answer_text, feedback=feedback, is_correct="yes" if correction.is_correct else "no"))
-        session.state = ConversationState.AWAITING_CONTINUE.value
-        db.commit()
-        full_message = f"{feedback}"
-        if explanation:
-            full_message += f"\n\n{explanation}"
-        await self.messages.send_text(contact.phone, full_message)
-        await self.messages.send_text(contact.phone, settings.continue_question_message)
+        
+        try:
+            correction = await self.gemini.correct_answer(
+                question_image_bytes=question_bytes, 
+                question_mime_type=question_mime, 
+                student_answer=answer_text
+            )
+            
+            feedback = correction.feedback
+            explanation = correction.explanation or ""
+            
+            db.add(StudentProgress(
+                contact_id=contact.id, 
+                topic=session.current_topic or "", 
+                question_id=session.current_question_id, 
+                question_name=session.current_question_name or "", 
+                answer_text=answer_text, 
+                feedback=feedback, 
+                is_correct="yes" if correction.is_correct else "no"
+            ))
+            
+            session.state = ConversationState.AWAITING_CONTINUE.value
+            db.commit()
+            
+            full_message = f"{feedback}"
+            if explanation:
+                full_message += f"\n\n{explanation}"
+            await self.messages.send_text(contact.phone, full_message)
+            await self.messages.send_text(contact.phone, settings.continue_question_message)
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar correção: {e}")
+            await self.messages.send_text(
+                contact.phone, 
+                "Estou com uma instabilidade momentânea na correção. Por favor, aguarde uns 60 segundos e reenvie sua resposta."
+            )
 
     async def _handle_continue_decision(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
         decision = self._normalize_decision(message.text)
         if decision is None:
-            await self.messages.send_text(contact.phone, "Responda com 'sim' para outra questao ou 'nao' para escolher outro tema.")
+            await self.messages.send_text(contact.phone, "Responda com 'sim' para outra questão ou 'nao' para escolher outro tema.")
             return
         if decision == "yes":
             sent = await self._send_next_question(db, contact, session)
@@ -186,7 +216,7 @@ class ConversationService:
             self._clear_topic_progress(db, contact.id, topic)
             sent = await self._send_next_question(db, contact, session)
             if not sent:
-                await self.messages.send_text(contact.phone, "Este tema ainda nao tem questoes cadastradas. Escolha outro tema.")
+                await self.messages.send_text(contact.phone, "Este tema ainda não tem questões cadastradas.")
                 await self._reset_to_topic_selection(db, session, send_menu=False)
             return
         await self.messages.send_text(contact.phone, settings.topic_completed_message)
