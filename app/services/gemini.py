@@ -20,9 +20,9 @@ Use Markdown para destacar fórmulas (ex: use crases).
 Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
 """
         
-        # Configuração do modelo utilizando a versão 2.5 Flash
+        # O modelo 1.5-flash é o que garante que o servidor suba sem erro
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-1.5-flash",
             system_instruction=self.system_instruction,
             generation_config={"response_mime_type": "application/json"}
         )
