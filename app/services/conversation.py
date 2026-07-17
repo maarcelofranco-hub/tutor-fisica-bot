@@ -270,11 +270,14 @@ class ConversationService:
         )
 
     async def _send_topic_menu(self, phone: str, send_welcome: bool = True) -> None:
-        # Saudação profissional e direta
         msg = (
-            "Olá! Sou seu tutor de Física. 🍎\n\n"
-            "Estou aqui para te ajudar a praticar e aprender.\n"
-            "Por favor, digite o nome do tema ou assunto que você deseja estudar agora:"
+            "🍎 *Olá! Sou seu tutor de Física.*\n\n"
+            "Estou aqui para te ajudar a praticar e aprender de forma eficiente.\n\n"
+            "Para começarmos, siga estes passos:\n"
+            "1️⃣ Digite o *nome do tema* ou assunto que deseja estudar.\n"
+            "2️⃣ Eu buscarei as melhores questões para você.\n"
+            "3️⃣ Resolva e envie a resposta para correção imediata.\n\n"
+            "Qual tema você quer estudar agora?"
         )
         await self.messages.send_text(phone, msg)
 
