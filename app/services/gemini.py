@@ -49,11 +49,12 @@ class GeminiService:
         
         Se a resposta estiver incorreta, forneça a resolução seguindo estas regras estritas:
         
-        1. FORMATAÇÃO: Use um ponto final antes de títulos (ex: .Equacionamento). Pule UMA LINHA entre cada linha de cálculo para manter a organização.
+        1. FORMATAÇÃO: Use um ponto final antes de títulos (ex: .Equacionamento). Pule UMA LINHA entre cada linha de cálculo.
         
         2. ESTILO "LIVRO DIDÁTICO":
            - NÃO explique cada passo algébrico (evite frases como "multiplicamos por", "cancelamos").
            - Apenas apresente as equações organizadas verticalmente.
+           - Use o padrão brasileiro: vírgula (,) para decimais e ponto (.) para multiplicação.
            - Use apenas números na substituição.
            
         3. NOTAÇÃO:
@@ -62,11 +63,11 @@ class GeminiService:
            
         4. EXEMPLO DE SAÍDA (Siga este formato):
            .Equacionamento
-           g * h = 0.5 * v²
+           g . h = 0,5 . v²
            
            .Substituição
-           10 * 2.45 = 0.5 * v²
-           24.5 = 0.5 * v²
+           10 . 2,45 = 0,5 . v²
+           24,5 = 0,5 . v²
            v² = 49
            v = √49
            v = 7 m/s
