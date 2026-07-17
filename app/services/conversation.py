@@ -192,7 +192,6 @@ class ConversationService:
         temas = self.questions.list_topics()
         
         menu_organizado = {}
-        
         for tema in temas:
             if "-" in tema:
                 partes = tema.split("-", 1)
@@ -202,17 +201,16 @@ class ConversationService:
                 area = "OUTROS"
                 nome_tema = tema
             
-            area = area.upper()
             if area not in menu_organizado:
                 menu_organizado[area] = []
             menu_organizado[area].append(nome_tema)
         
-        msg = "🍎 *Olá! Sou seu tutor de Física.*\n\nEscolha um tema por área para começar:\n"
+        msg = "🍎 *Olá! Sou seu tutor de Física.*\n\nEscolha um tema para começar:\n"
         
         for area in sorted(menu_organizado.keys()):
-            msg += f"\n*• {area}*\n"
+            msg += f"\n*{area.capitalize()}?*\n"
             for t in sorted(menu_organizado[area]):
-                msg += f"🔹 {t}\n"
+                msg += f"- {t}\n"
                 
         msg += "\nQual tema você quer estudar agora?"
         await self.messages.send_text(phone, msg)
