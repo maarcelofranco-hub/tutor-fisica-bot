@@ -116,16 +116,18 @@ class GeminiService:
             f"Resposta do aluno: {student_answer}\n\n"
             "Instrucoes CRÍTICAS de formatação para WhatsApp:\n"
             "- Responda em portugues brasileiro, tom didatico e direto.\n"
-            "- No campo 'steps', NÃO coloque números no início das frases (ex: não escreva '1)', '2)'). O sistema já enumera automaticamente.\n"
-            "- Abrevie os subscritos para não poluir a tela. Use 'm_p' em vez de 'm_pessoa', 'c_a' em vez de 'c_agua', etc.\n"
-            "- Matemática padrão BR: use vírgula para decimais (ex: 6,72) e ponto para multiplicação (ex: 200 . 4). NUNCA use asterisco (*) para multiplicar.\n"
+            "- No campo 'steps', NÃO coloque números no início das frases. O sistema já enumera automaticamente.\n"
+            "- Abrevie os subscritos (ex: 'm_p' em vez de 'm_pessoa').\n"
+            "- Matemática padrão BR: use vírgula para decimais (ex: 6,72) e ponto para multiplicação (ex: 200 . 4). NUNCA use asterisco (*).\n"
             "- Use o símbolo Δ para variações (ex: ΔT).\n"
-            "- Use asteriscos APENAS para deixar o texto em negrito no WhatsApp (ex: *Q = m . c . ΔT*).\n"
-            "- PROIBIDO explicar matemática básica em texto. Apenas mostre a evolução algébrica passo a passo.\n"
+            "- NÃO USE asteriscos (*) para negrito. Escreva o texto e as fórmulas normalmente sem marcações.\n"
+            "- ESTRUTURA DOS PASSOS (MUITO IMPORTANTE):\n"
+            "  1. O passo de 'Dados' DEVE ter cada informação em uma linha diferente, usando a quebra de linha (\\n) dentro da string do JSON.\n"
+            "  2. O passo de 'Cálculos' DEVE agrupar TODA a evolução algébrica em um ÚNICO passo. Use a quebra de linha (\\n) para separar cada etapa da equação, sem criar novos passos no array.\n"
             "- Retorne APENAS JSON valido com os campos:\n"
             '  {"is_correct": true|false, "feedback": "texto curto", "error": "onde errou ou null", '
             '"correct_answer": "resposta correta", "tip": "dica objetiva", '
-            '"steps": ["Dados: m_p = 80000 g, c_p = 0,84...", "Fórmula: *Q_p + Q_a = 0*", "Substituindo: *80000 . 0,84 . (-4) + ...*", "Resposta final: *T = 29,28 °C*"]}\n'
+            '"steps": ["Dados:\\nv_0 = 0 m/s\\nv = 15 m/s\\nΔS = 0,75 m", "Fórmula: v² = v_0² + 2 . a . ΔS", "Resolução:\\n15² = 0² + 2 . a . 0,75\\n225 = 1,5 . a\\na = 225 / 1,5\\na = 150 m/s²"]}\n'
         )
 
     def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
@@ -186,7 +188,7 @@ class GeminiService:
             lines.append("📖 Passo a passo:")
             for index, step in enumerate(steps, start=1):
                 lines.append(f"{index}. {str(step).strip()}")
-                lines.append("") # <--- Esta é a linha que adiciona o respiro entre os passos!
+                lines.append("") # Respiro entre os passos principais
 
         if feedback and (is_correct or not error):
             lines.extend(["📚 Comentario:", feedback.strip(), ""])
