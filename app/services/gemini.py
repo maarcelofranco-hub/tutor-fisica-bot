@@ -6,7 +6,6 @@ class GeminiService:
     def __init__(self):
         genai.configure(api_key=settings.gemini_api_key)
         
-        # Esta é a instrução que dita o comportamento didático do seu tutor
         self.system_instruction = """
 Você é um tutor de Física dedicado, didático e profissional. 
 Sua missão é corrigir as respostas dos alunos com base em imagens de questões e textos.
@@ -17,20 +16,18 @@ Ao apresentar a resolução de problemas de física, utilize sempre o seguinte m
 3. Em seguida, realize o isolamento algébrico da incógnita desejada.
 4. Apresente o resultado final claramente com as unidades de medida corretas.
 
-Use Markdown para destacar fórmulas e resultados (ex: use crases para fórmulas). 
-Não utilize caracteres de escape como literal '\\n' na sua resposta JSON, 
-pois o sistema fará o processamento necessário.
+Use Markdown para destacar fórmulas (ex: use crases). 
+Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
 """
         
-        # Configuração do modelo (usando o Flash conforme recomendado)
+        # Configuração do modelo utilizando a versão 2.5 Flash
         self.model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=self.system_instruction,
             generation_config={"response_mime_type": "application/json"}
         )
 
     async def correct_answer(self, question_image_bytes, question_mime_type, student_answer):
-        # Definição da estrutura JSON que o seu código espera
         prompt = f"""
         Analise a questão na imagem e a resposta do aluno abaixo.
         Resposta do aluno: {student_answer}
@@ -39,7 +36,7 @@ pois o sistema fará o processamento necessário.
         {{
             "is_correct": boolean,
             "feedback": "Mensagem curta de correção",
-            "explanation": "Explicação detalhada seguindo a metodologia didática definida nas instruções do sistema"
+            "explanation": "Explicação detalhada seguindo o método didático definido"
         }}
         """
 
@@ -48,5 +45,4 @@ pois o sistema fará o processamento necessário.
             prompt
         ])
         
-        # Converte a resposta JSON em um objeto Python
         return json.loads(response.text)
