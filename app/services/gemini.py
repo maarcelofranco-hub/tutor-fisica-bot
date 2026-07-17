@@ -1,4 +1,6 @@
+import json
 import logging
+import re
 from google import genai
 from app.config import settings
 from app.models.schemas import CorrectionResult
@@ -13,22 +15,6 @@ class GeminiService:
     def _get_client(self):
         return genai.Client(api_key=settings.gemini_api_key)
 
-    async def extract_text_from_image(self, image_bytes: bytes, mime_type: str) -> str:
-        if not self.enabled:
-            return "[modo teste] resposta extraida da imagem"
-        
-        client = self._get_client()
-        prompt = "Extraia o texto da resposta do aluno."
-        
-        response = client.models.generate_content(
-            model=self.model_name,
-            contents=[
-                prompt,
-                {"inline_data": {"data": image_bytes, "mime_type": mime_type}}
-            ]
-        )
-        return (response.text or "").strip()
-
     async def correct_answer(
         self,
         question_image_bytes: bytes | None,
@@ -37,49 +23,51 @@ class GeminiService:
         answer_key: str | None = None,
     ) -> CorrectionResult:
         if not self.enabled:
-            return CorrectionResult(is_correct=True, feedback="[Modo teste] Resposta recebida.", explanation=None)
+            return CorrectionResult(is_correct=True, feedback="[Modo teste]", explanation=None)
 
         client = self._get_client()
         prompt = self._build_prompt(student_answer, answer_key)
         
         contents = [prompt]
-        
         if question_image_bytes:
             contents.append({
-                "inline_data": {
-                    "data": question_image_bytes,
-                    "mime_type": question_mime_type
-                }
+                "inline_data": {"data": question_image_bytes, "mime_type": question_mime_type}
             })
 
-        # Configuração simplificada para máxima velocidade
+        # Sem limite de tokens para resoluções longas e organizadas
         response = client.models.generate_content(
             model=self.model_name, 
             contents=contents,
-            config={"max_output_tokens": 500, "temperature": 0.1}
+            config={"temperature": 0.1}
         )
-        
         return self._parse_response(response.text or "", student_answer)
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
-        # Agora pedimos texto puro, sem a complexidade do JSON
         return f"""
-        Avalie a resposta do aluno: '{student_answer}'. Esperado: '{answer_key}'.
-        
-        Siga estritamente este formato de resposta:
-        STATUS: [CORRETO ou INCORRETO]
-        FEEDBACK: [Um comentário curto]
-        RESOLUÇÃO:
-        [Passo a passo matemático simples]
+        Você é um professor de física. Avalie: '{student_answer}'. Esperado: '{answer_key}'.
+        Se incorreta, forneça a resolução completa.
+        Retorne APENAS um objeto JSON, com estas chaves:
+        "is_correct": boolean,
+        "feedback": "comentário curto",
+        "explanation": "Use *negrito* para títulos. É OBRIGATÓRIO pular uma linha entre cada passo matemático da resolução para facilitar a visualização no WhatsApp."
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
-        # Verifica se o aluno acertou buscando a palavra CORRETO no texto
-        is_correct = "CORRETO" in response_text.upper()
-        
-        # Retorna o texto bruto como explicação, sem risco de erro de parse
-        return CorrectionResult(
-            is_correct=is_correct,
-            feedback="Avaliação da resposta:",
-            explanation=response_text
-        )
+        try:
+            # Re.DOTALL permite que o JSON contenha quebras de linha (\n) sem quebrar o parse
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group(0))
+                return CorrectionResult(
+                    is_correct=data.get("is_correct", False),
+                    feedback=data.get("feedback", "Revise os cálculos."),
+                    explanation=data.get("explanation", "")
+                )
+            raise ValueError("Bloco JSON não encontrado.")
+        except Exception as e:
+            logger.error(f"Erro ao processar JSON: {e} | Resposta bruta: {response_text}")
+            return CorrectionResult(
+                is_correct=False, 
+                feedback="Erro ao processar a correção.", 
+                explanation=response_text
+            )
