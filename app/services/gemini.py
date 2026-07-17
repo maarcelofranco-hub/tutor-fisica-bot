@@ -4,6 +4,7 @@ import json
 
 class GeminiService:
     def __init__(self):
+        # Configuração da API
         genai.configure(api_key=settings.gemini_api_key)
         
         self.system_instruction = """
@@ -20,7 +21,8 @@ Use Markdown para destacar fórmulas (ex: use crases).
 Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
 """
         
-        # O modelo 1.5-flash é o que garante que o servidor suba sem erro
+        # Inicialização forçada com a versão estável
+        # O 'gemini-1.5-flash' é o nome reconhecido universalmente pela API v1
         self.model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             system_instruction=self.system_instruction,
@@ -40,9 +42,12 @@ Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
         }}
         """
 
-        response = await self.model.generate_content_async([
-            {"mime_type": question_mime_type, "data": question_image_bytes},
-            prompt
-        ])
-        
-        return json.loads(response.text)
+        try:
+            response = await self.model.generate_content_async([
+                {"mime_type": question_mime_type, "data": question_image_bytes},
+                prompt
+            ])
+            return json.loads(response.text)
+        except Exception as e:
+            print(f"Erro na chamada do Gemini: {e}")
+            return {"is_correct": False, "feedback": "Erro interno", "explanation": "Tente novamente em breve."}
