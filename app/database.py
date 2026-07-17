@@ -41,7 +41,7 @@ class StudentSession(Base):
     current_question_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    contact: Mapped["Contact"] = relationship(back_pubulates="session")
+    contact: Mapped["Contact"] = relationship(back_populates="session")
 
 
 class StudentProgress(Base):
