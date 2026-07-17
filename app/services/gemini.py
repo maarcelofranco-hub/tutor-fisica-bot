@@ -24,9 +24,13 @@ class GeminiService:
         client = self._get_client()
         prompt = "Extraia somente o conteudo escrito pelo aluno nesta imagem de resposta. Retorne apenas o texto encontrado."
         
+        # Correção aplicada aqui também para compatibilidade
         response = client.models.generate_content(
             model=self.model_name,
-            contents=[prompt, types.Part.from_data(data=image_bytes, mime_type=mime_type)]
+            contents=[
+                prompt,
+                {"inline_data": {"data": image_bytes, "mime_type": mime_type}}
+            ]
         )
         return (response.text or "").strip()
 
@@ -42,11 +46,19 @@ class GeminiService:
 
         client = self._get_client()
         prompt = self._build_prompt(student_answer, answer_key)
-        parts = [prompt]
+        
+        contents = [prompt]
+        
+        # Correção aplicada: uso de inline_data em vez de types.Part.from_data
         if question_image_bytes:
-            parts.append(types.Part.from_data(data=question_image_bytes, mime_type=question_mime_type))
+            contents.append({
+                "inline_data": {
+                    "data": question_image_bytes,
+                    "mime_type": question_mime_type
+                }
+            })
 
-        response = client.models.generate_content(model=self.model_name, contents=parts)
+        response = client.models.generate_content(model=self.model_name, contents=contents)
         return self._parse_response(response.text or "", student_answer)
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
@@ -58,6 +70,7 @@ class GeminiService:
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
         try:
+            # Limpeza básica do JSON retornado
             clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.MULTILINE)
             data = json.loads(clean_text)
             return CorrectionResult(
