@@ -1,60 +1,36 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
-from sqlalchemy.orm import Session
 import logging
-
-from app.config import settings
-from app.database import get_db
-from app.models.schemas import IncomingMessage
-from app.services.conversation import conversation_service
-from app.utils.phone import normalize_phone
+import time
+from fastapi import APIRouter, Request, BackgroundTasks
+from app.services.message_sender import MessageSender
+from app.api.handler import handle_message
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.get("/webhook")
-async def verify_webhook(
-    hub_mode: str = Query(alias="hub.mode", default=""),
-    hub_verify_token: str = Query(alias="hub.verify_token", default=""),
-    hub_challenge: str = Query(alias="hub.challenge", default=""),
-):
-    if hub_mode == "subscribe" and hub_verify_token == settings.whatsapp_verify_token:
-        return PlainTextResponse(hub_challenge)
-    raise HTTPException(status_code=403, detail="Verification failed")
+async def process_message(data: dict):
+    """
+    Função processada em segundo plano para não travar a resposta do Webhook.
+    Isso é crucial para evitar o timeout e a latência de 8 segundos.
+    """
+    try:
+        sender = MessageSender()
+        await handle_message(data, sender)
+    except Exception as e:
+        logger.error("Erro no processamento da mensagem: %s", e)
 
 @router.post("/webhook")
-async def receive_webhook(request: Request, db: Session = Depends(get_db)):
-    try:
-        payload = await request.json()
-    except Exception as e:
-        return {"status": "error", "message": "Invalid JSON"}
-
-    messages = _extract_messages(payload)
+async def webhook(request: Request, background_tasks: BackgroundTasks):
+    start_time = time.time()
+    data = await request.json()
     
-    for message in messages:
-        try:
-            logger.info(f"Processando mensagem de {message.phone}")
-            # Apenas chame o serviço, ele já gerencia o estado e a lógica de temas internamente
-            await conversation_service.handle_message(db, message)
-        except Exception:
-            logger.exception(f"Erro ao processar mensagem de {message.phone}")
-            
-    return {"status": "ok"}
+    # Validação rápida de payload do WhatsApp
+    if not data.get("entry"):
+        return {"status": "ok"}
 
-def _extract_messages(payload: dict) -> list[IncomingMessage]:
-    messages: list[IncomingMessage] = []
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            contacts = {item.get("wa_id"): item.get("profile", {}).get("name") for item in value.get("contacts", [])}
-            for item in value.get("messages", []):
-                phone = normalize_phone(item.get("from", ""))
-                if not phone: continue
-                incoming = IncomingMessage(phone=phone, message_id=item.get("id", ""), contact_name=contacts.get(item.get("from")))
-                message_type = item.get("type")
-                if message_type == "text":
-                    incoming.text = item.get("text", {}).get("body")
-                elif message_type == "image":
-                    incoming.text = item.get("image", {}).get("caption")
-                messages.append(incoming)
-    return messages
+    # Dispara o processamento em BACKGROUND e retorna imediatamente 200 OK
+    background_tasks.add_task(process_message, data)
+    
+    process_time = time.time() - start_time
+    logger.info("Webhook recebido e disparado em segundo plano (Tempo: %.4fs)", process_time)
+    
+    return {"status": "accepted"}
