@@ -2,13 +2,11 @@ import logging
 from app.config import settings
 from app.services.outbox import outbox
 from app.services.whatsapp import WhatsAppService
+from app.database import get_db, MediaCache
 
 logger = logging.getLogger(__name__)
 
 class MessageSender:
-    # Cache em memória para IDs do WhatsApp
-    _media_cache: dict[str, str] = {}
-
     def __init__(self) -> None:
         self.whatsapp = WhatsAppService()
 
@@ -33,23 +31,29 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
-        # 1. TENTA USAR O CACHE
-        if question_id and question_id in self._media_cache:
-            logger.info("Usando CACHE de media_id para a questão %s", question_id)
-            await self.whatsapp.send_image_by_id(phone, self._media_cache[question_id], caption=caption)
-            return
+        # 1. TENTA BUSCAR NO BANCO DE DADOS (SQLITE)
+        if question_id:
+            with next(get_db()) as db:
+                cached = db.query(MediaCache).filter(MediaCache.drive_id == question_id).first()
+                if cached:
+                    logger.info("Usando CACHE de media_id (DB) para a questão %s", question_id)
+                    await self.whatsapp.send_image_by_id(phone, cached.whatsapp_id, caption=caption)
+                    return
 
-        # 2. SE NÃO TEM CACHE, FAZ O UPLOAD E GUARDA
+        # 2. SE NÃO TEM NO BANCO, FAZ O UPLOAD
         logger.info("Realizando UPLOAD da imagem para o WhatsApp...")
         media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
         
         # Envia usando o ID que acabou de receber
         await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
         
-        # 3. SALVA NO CACHE
+        # 3. SALVA NO BANCO DE DADOS PARA SEMPRE
         if question_id:
-            self._media_cache[question_id] = media_id
-            logger.info("Media ID %s salvo no cache para a questão %s", media_id, question_id)
+            with next(get_db()) as db:
+                new_cache = MediaCache(drive_id=question_id, whatsapp_id=media_id)
+                db.add(new_cache)
+                db.commit()
+                logger.info("Media ID %s salvo no DB para a questão %s", media_id, question_id)
 
     async def send_document(
         self,
