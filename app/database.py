@@ -41,7 +41,7 @@ class StudentSession(Base):
     current_question_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    contact: Mapped["Contact"] = relationship(back_populates="session")
+    contact: Mapped["Contact"] = relationship(back_pubulates="session")
 
 
 class StudentProgress(Base):
@@ -59,6 +59,13 @@ class StudentProgress(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     contact: Mapped["Contact"] = relationship(back_populates="progress")
+
+
+class MediaCache(Base):
+    __tablename__ = "media_cache"
+
+    drive_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
 engine = create_engine(
