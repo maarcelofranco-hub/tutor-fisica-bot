@@ -44,12 +44,18 @@ class GeminiService:
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
         return f"""
-        Você é um professor de física. Avalie: '{student_answer}'. Esperado: '{answer_key}'.
-        Se incorreta, forneça a resolução completa.
+        Você é um professor de física. Avalie a resposta do aluno: '{student_answer}'. 
+        O gabarito esperado é: '{answer_key}'.
+        
+        Se a resposta estiver incorreta, forneça a resolução completa seguindo estritamente estas regras:
+        1. Formatação: Use *negrito* para títulos. Pule uma linha entre cada passo matemático.
+        2. Regra Matemática (IMPORTANTE): Não utilize unidades de medida (m, s, kg, J, etc.) durante a manipulação algébrica nem na substituição numérica. Apenas números.
+        3. Insira a unidade de medida SOMENTE no resultado final.
+        
         Retorne APENAS um objeto JSON, com estas chaves:
         "is_correct": boolean,
         "feedback": "comentário curto",
-        "explanation": "Use *negrito* para títulos. É OBRIGATÓRIO pular uma linha entre cada passo matemático da resolução para facilitar a visualização no WhatsApp."
+        "explanation": "Resolução detalhada conforme as regras acima."
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
