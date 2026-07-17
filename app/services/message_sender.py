@@ -50,16 +50,24 @@ class MessageSender:
         menu_file = question_provider.get_themes_menu_file()
         if not menu_file:
             return False
+            
         file_bytes, mime_type = question_provider.download_file(menu_file.id)
+        
+        # A nova instrução direta, sem listar os temas
+        instruction = "Escolha um tema no PDF abaixo. Resolva a questão e me envie sua resposta para correção!"
+        
         if mime_type == "application/pdf" or menu_file.name.lower().endswith(".pdf"):
+            # Envia a instrução clara e depois o documento
+            await self.send_text(phone, instruction)
             await self.send_document(phone, file_bytes, "application/pdf", menu_file.name)
             return True
+            
         if mime_type.startswith("image/"):
             await self.send_question_image(
                 phone=phone,
                 image_bytes=file_bytes,
                 mime_type=mime_type,
-                caption="Opcoes de temas",
+                caption=instruction,
             )
             return True
         return False
