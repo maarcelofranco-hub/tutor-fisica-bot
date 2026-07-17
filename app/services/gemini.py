@@ -34,7 +34,6 @@ class GeminiService:
                 "inline_data": {"data": question_image_bytes, "mime_type": question_mime_type}
             })
 
-        # Sem limite de tokens para resoluções longas e organizadas
         response = client.models.generate_content(
             model=self.model_name, 
             contents=contents,
@@ -44,23 +43,33 @@ class GeminiService:
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
         return f"""
-        Você é um professor de física. Avalie a resposta do aluno: '{student_answer}'. 
-        O gabarito esperado é: '{answer_key}'.
+        Você é um professor de física renomado. Avalie a resposta: '{student_answer}'. Gabarito: '{answer_key}'.
         
-        Se a resposta estiver incorreta, forneça a resolução completa seguindo estritamente estas regras:
-        1. Formatação: Use *negrito* para títulos. Pule uma linha entre cada passo matemático.
-        2. Regra Matemática (IMPORTANTE): Não utilize unidades de medida (m, s, kg, J, etc.) durante a manipulação algébrica nem na substituição numérica. Apenas números.
-        3. Insira a unidade de medida SOMENTE no resultado final.
+        Se incorreta, forneça a resolução completa com a elegância e clareza de um LIVRO DIDÁTICO seguindo estas regras:
+        
+        1. FORMATAÇÃO: Use *negrito* para títulos e seções. Pule UMA LINHA entre cada linha de cálculo para manter a organização.
+        
+        2. REGRA DE OURO (SEM UNIDADES): Durante a manipulação algébrica e substituição numérica, NÃO utilize unidades de medida (m, s, kg, J). Trabalhe apenas com os números.
+        
+        3. NOTAÇÃO MATEMÁTICA FORMAL:
+           - NÃO utilize 'sqrt' ou '^2'. 
+           - Use o símbolo de raiz quadrada "√".
+           - Use o sobrescrito "²" para potências (exemplo: v²).
+           - Exemplo de estilo:
+             v² = 2 * g * h
+             v = √49
+             v = 7
+        
+        4. RESULTADO: Apenas na conclusão final da resolução, apresente o resultado acompanhado da unidade de medida correta.
         
         Retorne APENAS um objeto JSON, com estas chaves:
         "is_correct": boolean,
         "feedback": "comentário curto",
-        "explanation": "Resolução detalhada conforme as regras acima."
+        "explanation": "Resolução detalhada seguindo o padrão de livro didático."
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
         try:
-            # Re.DOTALL permite que o JSON contenha quebras de linha (\n) sem quebrar o parse
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group(0))
