@@ -4,7 +4,6 @@ import json
 
 class GeminiService:
     def __init__(self):
-        # Configuração da API
         genai.configure(api_key=settings.gemini_api_key)
         
         self.system_instruction = """
@@ -17,14 +16,13 @@ Ao apresentar a resolução de problemas de física, utilize sempre o seguinte m
 3. Em seguida, realize o isolamento algébrico da incógnita desejada.
 4. Apresente o resultado final claramente com as unidades de medida corretas.
 
-Use Markdown para destacar fórmulas (ex: use crases). 
-Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
+Use Markdown para destacar fórmulas (ex: use crases).
 """
         
-        # Inicialização forçada com a versão estável
-        # O 'gemini-1.5-flash' é o nome reconhecido universalmente pela API v1
+        # Usamos o caminho completo do modelo para forçar a rota correta da API (v1)
+        # Isso evita que a biblioteca tente buscar o endpoint v1beta automaticamente
         self.model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="models/gemini-1.5-flash",
             system_instruction=self.system_instruction,
             generation_config={"response_mime_type": "application/json"}
         )
@@ -34,12 +32,7 @@ Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
         Analise a questão na imagem e a resposta do aluno abaixo.
         Resposta do aluno: {student_answer}
         
-        Retorne um JSON com a seguinte estrutura:
-        {{
-            "is_correct": boolean,
-            "feedback": "Mensagem curta de correção",
-            "explanation": "Explicação detalhada seguindo o método didático definido"
-        }}
+        Retorne um JSON contendo exatamente as chaves: "is_correct", "feedback", "explanation".
         """
 
         try:
@@ -47,7 +40,17 @@ Não utilize caracteres de escape como literal '\\n' na sua resposta JSON.
                 {"mime_type": question_mime_type, "data": question_image_bytes},
                 prompt
             ])
-            return json.loads(response.text)
+            
+            # Removemos caracteres de formatação Markdown caso venham no início/fim
+            raw_text = response.text.replace('```json', '').replace('```', '').strip()
+            data = json.loads(raw_text)
+            
+            # Validação: garante que o JSON tenha as chaves necessárias antes de retornar
+            if isinstance(data, dict) and 'feedback' in data:
+                return data
+            else:
+                return {"is_correct": False, "feedback": "Erro de formato", "explanation": "A resposta não está no formato correto."}
+        
         except Exception as e:
-            print(f"Erro na chamada do Gemini: {e}")
-            return {"is_correct": False, "feedback": "Erro interno", "explanation": "Tente novamente em breve."}
+            print(f"Erro na execução: {e}")
+            return {"is_correct": False, "feedback": "Erro interno", "explanation": "Tente novamente."}
