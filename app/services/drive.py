@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -173,6 +174,18 @@ class DriveService:
         return self._find_topic_folder_id(topic) is not None
 
     def _download_file(self, file_id: str) -> tuple[bytes, str]:
+        # Sistema de Cache Inteligente
+        cache_dir = Path("cache")
+        cache_dir.mkdir(exist_ok=True)
+        file_path = cache_dir / f"{file_id}.bin"
+        meta_path = cache_dir / f"{file_id}.meta"
+
+        if file_path.exists() and meta_path.exists():
+            with open(file_path, "rb") as f:
+                data = f.read()
+            mime_type = meta_path.read_text()
+            return data, mime_type
+
         metadata = self.service.files().get(
             fileId=file_id,
             fields="mimeType,name",
@@ -184,8 +197,15 @@ class DriveService:
         done = False
         while not done:
             _, done = downloader.next_chunk()
+        
+        data = buffer.getvalue()
         mime_type = metadata.get("mimeType", "application/octet-stream")
-        return buffer.getvalue(), mime_type
+
+        with open(file_path, "wb") as f:
+            f.write(data)
+        meta_path.write_text(mime_type)
+
+        return data, mime_type
 
     def _list_child_folders(self, parent_id: str) -> list[DriveFile]:
         response = (
