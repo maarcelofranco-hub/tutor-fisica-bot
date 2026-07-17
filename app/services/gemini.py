@@ -67,18 +67,19 @@ class GeminiService:
         1. Se estiver correta, parabenize-o de forma motivadora.
         2. Se estiver incorreta, forneça a resolução seguindo ESTRITAMENTE este padrão:
         
-        - DADOS: Liste as variáveis fornecidas no problema (ex: v₀ = 0, g = 10 m/s², h = 20 m).
-        - FÓRMULA: Escreva a fórmula principal que será utilizada, usando notação clara (ex: v² = v₀² + 2.g.Δh).
-        - RESOLUÇÃO: Mostre o passo a passo dos cálculos até chegar ao resultado final.
+        - DADOS: Liste as variáveis com suas unidades (ex: v₀ = 0 m/s, g = 10 m/s², Δh = 20 m).
+        - FÓRMULA: Escreva a fórmula principal que será utilizada (ex: v² = v₀² + 2.g.Δh).
+        - RESOLUÇÃO: Mostre o passo a passo dos cálculos, usando APENAS os valores numéricos. NÃO inclua unidades de medida dentro da substituição e das operações da resolução. 
         
         REGRAS DE FORMATAÇÃO:
         - Use caracteres Unicode para expoentes (ex: m/s², m²).
+        - Exemplo de substituição correta: v² = 0² + 2 * 10 * 20
         - Mantenha tudo legível para WhatsApp.
         
         Retorne a resposta EXCLUSIVAMENTE em formato JSON com as chaves:
         - 'is_correct' (boolean)
         - 'feedback' (string curta e motivadora)
-        - 'explanation' (string com a resolução no padrão solicitado)
+        - 'explanation' (string com a resolução no padrão solicitado, sem unidades nos cálculos)
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
