@@ -85,7 +85,7 @@ class ConversationService:
         if topics and not self.questions.topic_exists(topic):
             await self.messages.send_text(
                 contact.phone,
-                f"Tema nao encontrado. Temas disponiveis: {', '.join(topics)}",
+                "Tema não encontrado.",
             )
             await self._send_topic_menu(contact.phone, send_welcome=False)
             return
