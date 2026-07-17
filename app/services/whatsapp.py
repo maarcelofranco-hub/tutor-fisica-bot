@@ -1,7 +1,5 @@
 import httpx
-
 from app.config import settings
-
 
 class WhatsAppService:
     def __init__(self) -> None:
@@ -20,7 +18,6 @@ class WhatsAppService:
 
     async def send_text(self, phone: str, text: str) -> None:
         from app.utils.phone import normalize_phone
-
         phone = normalize_phone(phone)
         payload = {
             "messaging_product": "whatsapp",
@@ -44,6 +41,24 @@ class WhatsAppService:
             },
         )
 
+    # Nova função para envio instantâneo via media_id
+    async def send_image_by_id(self, phone: str, media_id: str, caption: str | None = None) -> None:
+        from app.utils.phone import normalize_phone
+        phone = normalize_phone(phone)
+        image_payload: dict = {"id": media_id}
+        if caption:
+            image_payload["caption"] = caption
+            
+        await self._post(
+            "/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": phone,
+                "type": "image",
+                "image": image_payload,
+            },
+        )
+
     async def send_image_bytes(
         self,
         phone: str,
@@ -52,7 +67,6 @@ class WhatsAppService:
         caption: str | None = None,
     ) -> None:
         from app.utils.phone import normalize_phone
-
         phone = normalize_phone(phone)
         media_id = await self._upload_media(image_bytes, mime_type)
         image_payload: dict = {"id": media_id}
@@ -77,7 +91,6 @@ class WhatsAppService:
         caption: str | None = None,
     ) -> None:
         from app.utils.phone import normalize_phone
-
         phone = normalize_phone(phone)
         media_id = await self._upload_media(file_bytes, mime_type, filename=filename)
         document_payload: dict = {"id": media_id, "filename": filename}
