@@ -120,7 +120,6 @@ class ConversationService:
         resolved_topic = None
         for t in topics:
             nome_limpo = t.split("-", 1)[-1].strip().lower()
-            # Verifica igualdade exata ou similaridade alta (> 80%) sem usar IA
             if nome_limpo == topic_input or t.lower() == topic_input or SequenceMatcher(None, nome_limpo, topic_input).ratio() > 0.8:
                 resolved_topic = t
                 break
@@ -161,7 +160,8 @@ class ConversationService:
             )
             
             feedback = correction.feedback
-            explanation = correction.explanation or ""
+            # Aplicando a limpeza de \n para o WhatsApp e formatação
+            explanation = (correction.explanation or "").replace("\\n", "\n")
             
             db.add(StudentProgress(
                 contact_id=contact.id, 
@@ -176,9 +176,11 @@ class ConversationService:
             session.state = ConversationState.AWAITING_CONTINUE.value
             db.commit()
             
-            full_message = f"{feedback}"
+            # Monta a mensagem formatada para o WhatsApp com Markdown
+            full_message = f"*{feedback}*"
             if explanation:
-                full_message += f"\n\n{explanation}"
+                full_message += f"\n\n*Resolução:*\n{explanation}"
+                
             await self.messages.send_text(contact.phone, full_message)
             await self.messages.send_text(contact.phone, settings.continue_question_message)
             
