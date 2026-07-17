@@ -9,7 +9,6 @@ from app.services.message_sender import MessageSender
 from app.services.ocr import OCRService
 from app.services.question_provider import question_provider
 from app.utils.text import labels_match
-from app.services.llm import selecionar_tema_por_input
 
 logger = logging.getLogger(__name__)
 
@@ -109,27 +108,30 @@ class ConversationService:
         await self.messages.send_text(phone, msg)
 
     async def _handle_topic_selection(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
-        topic_input = (message.text or "").strip()
+        topic_input = (message.text or "").strip().lower()
         if not topic_input:
             await self._send_topic_menu(contact.phone)
             return
+            
         self.questions.refresh()
         topics = self.questions.list_topics()
-        if self.questions.topic_exists(topic_input):
-            resolved_topic = self.questions.resolve_topic_name(topic_input)
+        
+        resolved_topic = None
+        for t in topics:
+            nome_limpo = t.split("-", 1)[-1].strip().lower()
+            if nome_limpo == topic_input or t.lower() == topic_input:
+                resolved_topic = t
+                break
+        
+        if resolved_topic:
+            session.current_topic = resolved_topic
+            sent = await self._send_next_question(db, contact, session)
+            if not sent:
+                await self.messages.send_text(contact.phone, "Este tema ainda nao tem questoes cadastradas.")
+                await self._reset_to_topic_selection(db, session, send_menu=False)
         else:
-            tema_sugerido = selecionar_tema_por_input(topic_input, topics)
-            if tema_sugerido in topics:
-                resolved_topic = tema_sugerido
-            else:
-                await self.messages.send_text(contact.phone, "Não encontrei um tema relacionado ao que você digitou.")
-                await self._send_topic_menu(contact.phone)
-                return
-        session.current_topic = resolved_topic
-        sent = await self._send_next_question(db, contact, session)
-        if not sent:
-            await self.messages.send_text(contact.phone, "Este tema ainda nao tem questoes cadastradas. Escolha outro tema.")
-            await self._reset_to_topic_selection(db, session, send_menu=False)
+            await self.messages.send_text(contact.phone, "Não encontrei um tema relacionado ao que você digitou.")
+            await self._send_topic_menu(contact.phone)
 
     async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
         if not session.current_question_id:
