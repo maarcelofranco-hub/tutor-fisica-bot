@@ -54,7 +54,7 @@ class GeminiService:
                 }
             })
 
-        # Aumento do max_output_tokens para 500 para evitar cortes no JSON
+        # Mantendo 500 tokens para evitar que a resposta seja cortada
         response = client.models.generate_content(
             model=self.model_name, 
             contents=contents,
@@ -64,19 +64,16 @@ class GeminiService:
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
         return f"""
-        Você é um assistente de física que foca apenas na resolução matemática.
-        Avalie a resposta do aluno: '{student_answer}'. Esperado: '{answer_key}'.
+        Você é um assistente de física.
+        Avalie a resposta: '{student_answer}'. Esperado: '{answer_key}'.
         
-        Se a resposta estiver incorreta, forneça a resolução seguindo ESTRITAMENTE este formato minimalista:
+        Se a resposta estiver incorreta, forneça a resolução seguindo ESTRITAMENTE este formato:
         
         *DADOS*
         (Liste apenas variáveis: valores)
         
         *RESOLUÇÃO*
-        (Apenas passos matemáticos, um por linha. Ex:
-        4 / 3.6 = 1.11
-        1.8 = 5 * t²
-        t = 0.6)
+        (Apenas passos matemáticos, um por linha)
         
         *RESPOSTA*
         (Valor final com unidade)
@@ -84,10 +81,31 @@ class GeminiService:
         Retorne em JSON com as chaves: 
         - 'is_correct' (boolean)
         - 'feedback' (curtíssimo)
-        - 'explanation' (o texto acima, formatado)
+        - 'explanation' (o texto acima formatado)
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
         try:
             # Remove blocos de markdown
-            clean_text = re.sub(r'^```json\s*|\s*
+            clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.MULTILINE)
+            
+            # Tenta fechar JSONs incompletos
+            if clean_text.count('{') > clean_text.count('}'):
+                clean_text += '}'
+                
+            data = json.loads(clean_text)
+            return CorrectionResult(
+                is_correct=data.get("is_correct", False),
+                feedback=data.get("feedback", "Corrigido."),
+                explanation=data.get("explanation", "Sem detalhes.")
+            )
+        except Exception as e:
+            logger.error(f"Erro no parse do JSON: {e} | Resposta original: {response_text}")
+            
+            # CAMADA DE SEGURANÇA: Se o JSON quebrar, enviamos o texto bruto
+            # para que o aluno não receba a mensagem de "Erro ao processar"
+            return CorrectionResult(
+                is_correct=False,
+                feedback="Aqui está a resolução:",
+                explanation=response_text if len(response_text) > 5 else "Tente reenviar a resposta."
+            )
