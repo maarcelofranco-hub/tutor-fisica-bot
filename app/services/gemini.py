@@ -54,32 +54,37 @@ class GeminiService:
                 }
             })
 
-        response = client.models.generate_content(model=self.model_name, contents=contents)
+        # Configuração de velocidade: max_output_tokens limita o tamanho e temperature 0.1 garante foco matemático
+        response = client.models.generate_content(
+            model=self.model_name, 
+            contents=contents,
+            config={"max_output_tokens": 300, "temperature": 0.1}
+        )
         return self._parse_response(response.text or "", student_answer)
 
     def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
         return f"""
-        Você é um professor de física didático.
-        O aluno respondeu: '{student_answer}'.
-        A resposta correta esperada é: '{answer_key}'.
+        Você é um assistente de física que foca apenas na resolução matemática.
+        Avalie a resposta do aluno: '{student_answer}'. Esperado: '{answer_key}'.
         
-        Sua tarefa é avaliar a resposta:
-        1. Se estiver correta, parabenize-o de forma motivadora.
-        2. Se estiver incorreta, forneça a resolução seguindo ESTRITAMENTE este padrão:
+        Se a resposta estiver incorreta, forneça a resolução seguindo ESTRITAMENTE este formato minimalista:
         
-        - DADOS: Liste as variáveis com suas unidades (ex: v₀ = 0 m/s, g = 10 m/s², Δh = 20 m).
-        - FÓRMULA: Escreva a fórmula principal que será utilizada (ex: v² = v₀² + 2.g.Δh).
-        - RESOLUÇÃO: Mostre o passo a passo dos cálculos, usando APENAS os valores numéricos. NÃO inclua unidades de medida dentro da substituição e das operações da resolução. 
+        *DADOS*
+        (Liste apenas variáveis: valores)
         
-        REGRAS DE FORMATAÇÃO:
-        - Use caracteres Unicode para expoentes (ex: m/s², m²).
-        - Exemplo de substituição correta: v² = 0² + 2 * 10 * 20
-        - Mantenha tudo legível para WhatsApp.
+        *RESOLUÇÃO*
+        (Apenas passos matemáticos, um por linha. Ex:
+        4 / 3.6 = 1.11
+        1.8 = 5 * t²
+        t = 0.6)
         
-        Retorne a resposta EXCLUSIVAMENTE em formato JSON com as chaves:
+        *RESPOSTA*
+        (Valor final com unidade)
+        
+        Retorne em JSON com as chaves: 
         - 'is_correct' (boolean)
-        - 'feedback' (string curta e motivadora)
-        - 'explanation' (string com a resolução no padrão solicitado, sem unidades nos cálculos)
+        - 'feedback' (curtíssimo)
+        - 'explanation' (o texto acima, formatado)
         """
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
