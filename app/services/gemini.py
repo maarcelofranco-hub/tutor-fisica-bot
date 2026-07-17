@@ -3,7 +3,6 @@ import logging
 import re
 from google import genai
 from google.genai import types
-
 from app.config import settings
 from app.models.schemas import CorrectionResult
 
@@ -13,12 +12,10 @@ class GeminiService:
     def __init__(self) -> None:
         self.enabled = bool(settings.gemini_api_key)
         self.model_name = settings.gemini_model
-        self.client = None
 
     def _get_client(self):
-        if self.client is None and self.enabled:
-            self.client = genai.Client(api_key=settings.gemini_api_key)
-        return self.client
+        # Cria um novo cliente a cada chamada para evitar erros de loop
+        return genai.Client(api_key=settings.gemini_api_key)
 
     async def extract_text_from_image(self, image_bytes: bytes, mime_type: str) -> str:
         if not self.enabled:
