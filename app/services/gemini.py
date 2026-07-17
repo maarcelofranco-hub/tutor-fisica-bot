@@ -1,60 +1,181 @@
-import httpx
-from app.config import settings
-import json
 import base64
+import json
+import logging
+import re
+
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+
+from app.config import settings
+from app.models.schemas import CorrectionResult
+
+logger = logging.getLogger(__name__)
+
 
 class GeminiService:
-    def __init__(self):
-        self.api_key = settings.gemini_api_key
-        # Voltando para v1beta: O log provou que o Google exige essa versão para este modelo
-        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
+    def __init__(self) -> None:
+        self.enabled = bool(settings.gemini_api_key)
+        if self.enabled:
+            genai.configure(api_key=settings.gemini_api_key)
+            self.model = genai.GenerativeModel(settings.gemini_model)
+        else:
+            self.model = None
+            logger.warning("GEMINI_API_KEY not set. Using mock correction mode.")
 
-    async def correct_answer(self, question_image_bytes, question_mime_type, student_answer):
-        # 1. Converte a imagem corretamente (Isso resolveu o erro do 'utf-8')
-        image_base64 = base64.b64encode(question_image_bytes).decode('utf-8')
-        
-        # 2. Prepara os dados para enviar ao Google
-        payload = {
-            "contents": [{
-                "parts": [
-                    {
-                        "text": f"""Você é um tutor de Física dedicado e didático.
-Analise a questão e a resposta: {student_answer}
+    async def extract_text_from_image(self, image_bytes: bytes, mime_type: str) -> str:
+        if not self.enabled:
+            return "[modo teste] resposta extraida da imagem"
+        prompt = (
+            "Extraia somente o conteudo escrito pelo aluno nesta imagem de resposta. "
+            "Retorne apenas o texto encontrado."
+        )
+        response = await self.model.generate_content_async(
+            [
+                prompt,
+                {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode("utf-8")},
+            ]
+        )
+        return (response.text or "").strip()
 
-Utilize este método na sua explicação:
-1. Identifique e converta unidades para o S.I.
-2. Substitua os valores na fórmula.
-3. Isole a incógnita.
-4. Apresente o resultado.
+    async def correct_answer(
+        self,
+        question_image_bytes: bytes | None,
+        question_mime_type: str,
+        student_answer: str,
+        answer_key: str | None = None,
+    ) -> CorrectionResult:
+        if not self.enabled:
+            return CorrectionResult(
+                is_correct=True,
+                feedback=self._format_feedback(
+                    is_correct=True,
+                    student_answer=student_answer,
+                    feedback="[Modo teste] Resposta recebida.",
+                    error=None,
+                    correct_answer=None,
+                    tip=None,
+                    steps=None,
+                ),
+                explanation=None,
+            )
 
-Retorne APENAS um JSON com 'is_correct', 'feedback', 'explanation'."""
-                    },
-                    {
-                        "inline_data": {
-                            "mime_type": question_mime_type, 
-                            "data": image_base64
-                        }
-                    }
-                ]
-            }]
-        }
+        prompt = self._build_prompt(student_answer, answer_key)
+        parts: list = [prompt]
+        if question_image_bytes:
+            parts.append(
+                {
+                    "mime_type": question_mime_type,
+                    "data": base64.b64encode(question_image_bytes).decode("utf-8"),
+                }
+            )
 
-        async with httpx.AsyncClient() as client:
-            try:
-                # 3. Chama a API diretamente
-                response = await client.post(self.url, json=payload, timeout=30.0)
-                
-                # Se o Google chiar, mostramos o erro sem quebrar seu bot
-                if response.status_code != 200:
-                    print(f"Erro da API do Google: Status {response.status_code} - {response.text}")
-                    return {"is_correct": False, "feedback": "Erro na API", "explanation": "O servidor de IA rejeitou a chamada."}
+        try:
+            response = await self.model.generate_content_async(parts)
+            return self._parse_response(response.text or "", student_answer)
+        except google_exceptions.ResourceExhausted:
+            logger.warning("Gemini quota exceeded")
+            return CorrectionResult(
+                is_correct=False,
+                feedback=(
+                    "A correcao automatica esta temporariamente indisponivel "
+                    "(limite diario da API Gemini atingido). "
+                    "Sua resposta foi recebida. Tente novamente em alguns minutos "
+                    "ou amanha. Para continuar estudando, envie o nome de outro tema."
+                ),
+                explanation=None,
+            )
+        except Exception:
+            logger.exception("Gemini correction failed")
+            return CorrectionResult(
+                is_correct=False,
+                feedback=(
+                    "Nao foi possivel corrigir agora. Sua resposta foi recebida. "
+                    "Tente novamente em instantes ou envie outro tema."
+                ),
+                explanation=None,
+            )
 
-                result = response.json()
-                
-                # 4. Extrai e limpa a resposta
-                text = result['candidates'][0]['content']['parts'][0]['text']
-                return json.loads(text.replace('```json', '').replace('```', '').strip())
-            
-            except Exception as e:
-                print(f"Erro na chamada HTTP ou formatação JSON: {e}")
-                return {"is_correct": False, "feedback": "Erro interno", "explanation": "Houve uma instabilidade, tente reenviar."}
+    def _build_prompt(self, student_answer: str, answer_key: str | None) -> str:
+        key_section = (
+            f"Gabarito cadastrado: {answer_key}"
+            if answer_key
+            else "Nao ha gabarito cadastrado. Resolva a questao a partir do enunciado."
+        )
+        return (
+            "Voce e um professor de Fisica do ensino medio corrigindo a resposta de um aluno brasileiro.\n"
+            f"{key_section}\n"
+            f"Resposta do aluno: {student_answer}\n\n"
+            "Instrucoes:\n"
+            "- Responda em portugues brasileiro, tom didatico e claro.\n"
+            "- Seja detalhado, com passos numerados quando util.\n"
+            "- Retorne APENAS JSON valido com os campos:\n"
+            '  {"is_correct": true|false, "feedback": "texto curto", "error": "onde errou ou null", '
+            '"correct_answer": "resposta correta", "tip": "dica objetiva", '
+            '"steps": ["passo 1", "passo 2"]}\n'
+        )
+
+    def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        try:
+            payload = json.loads(cleaned)
+            is_correct = bool(payload.get("is_correct"))
+            feedback = self._format_feedback(
+                is_correct=is_correct,
+                student_answer=student_answer,
+                feedback=str(payload.get("feedback", "Correcao concluida.")),
+                error=payload.get("error"),
+                correct_answer=payload.get("correct_answer"),
+                tip=payload.get("tip"),
+                steps=payload.get("steps") if isinstance(payload.get("steps"), list) else None,
+            )
+            return CorrectionResult(is_correct=is_correct, feedback=feedback, explanation=None)
+        except json.JSONDecodeError:
+            fallback = cleaned[:900] if cleaned else "Nao foi possivel analisar a resposta."
+            return CorrectionResult(is_correct=False, feedback=fallback, explanation=None)
+
+    def _format_feedback(
+        self,
+        is_correct: bool,
+        student_answer: str,
+        feedback: str,
+        error: str | None,
+        correct_answer: str | None,
+        tip: str | None,
+        steps: list | None,
+    ) -> str:
+        if settings.gemini_correction_style.lower() != "detailed":
+            return feedback
+
+        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📊 RESULTADO: {result_label}",
+            "",
+            "📝 Sua resposta:",
+            student_answer.strip() or "(nao informada)",
+            "",
+        ]
+
+        if not is_correct and error:
+            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
+
+        if correct_answer:
+            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
+
+        if tip:
+            lines.extend(["💡 Dica:", str(tip).strip(), ""])
+
+        if steps:
+            lines.append("📖 Passo a passo:")
+            for index, step in enumerate(steps, start=1):
+                lines.append(f"{index}. {str(step).strip()}")
+            lines.append("")
+
+        if feedback and (is_correct or not error):
+            lines.extend(["📚 Comentario:", feedback.strip(), ""])
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        return "\n".join(lines).strip()
