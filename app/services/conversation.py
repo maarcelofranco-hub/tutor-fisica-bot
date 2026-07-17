@@ -122,7 +122,8 @@ class ConversationService:
             if tema_sugerido in topics:
                 resolved_topic = tema_sugerido
             else:
-                await self.messages.send_text(contact.phone, tema_sugerido)
+                await self.messages.send_text(contact.phone, "Não encontrei um tema relacionado ao que você digitou.")
+                await self._send_topic_menu(contact.phone)
                 return
         session.current_topic = resolved_topic
         sent = await self._send_next_question(db, contact, session)
