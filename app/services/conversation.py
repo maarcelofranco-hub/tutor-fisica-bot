@@ -270,16 +270,13 @@ class ConversationService:
         )
 
     async def _send_topic_menu(self, phone: str, send_welcome: bool = True) -> None:
-        sent_menu = await self.messages.send_themes_menu(phone)
-        if send_welcome:
-            await self.messages.send_text(phone, settings.welcome_message)
-        if not sent_menu:
-            topics = self.questions.list_topics()
-            if topics:
-                await self.messages.send_text(
-                    phone,
-                    f"Temas disponiveis: {', '.join(topics)}",
-                )
+        # Saudação profissional e direta
+        msg = (
+            "Olá! Sou seu tutor de Física. 🍎\n\n"
+            "Estou aqui para te ajudar a praticar e aprender.\n"
+            "Por favor, digite o nome do tema ou assunto que você deseja estudar agora:"
+        )
+        await self.messages.send_text(phone, msg)
 
     async def _reset_to_topic_selection(
         self,
