@@ -98,10 +98,10 @@ class ConversationService:
                 menu_organizado[area] = []
             menu_organizado[area].append(nome_tema)
         
-        msg = "🍎 *Olá! Sou seu tutor de Física.*\n\nEscolha um tema para começar:\n"
+        msg = "*Escolha um tema para começar:*\n"
         
         for area in sorted(menu_organizado.keys()):
-            msg += f"\n*{area.capitalize()}?:*\n"
+            msg += f"\n*{area.capitalize()}*\n"
             for t in sorted(menu_organizado[area]):
                 msg += f"• {t}\n"
                 
