@@ -133,7 +133,66 @@ class GeminiService:
     def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            cleaned = re.sub(r"^
-http://googleusercontent.com/immersive_entry_chip/0
+            # Substituição segura das crases para não quebrar a cópia do código
+            cleaned = re.sub(r"^\x60{3}(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*\x60{3}$", "", cleaned)
+        try:
+            payload = json.loads(cleaned)
+            is_correct = bool(payload.get("is_correct"))
+            feedback = self._format_feedback(
+                is_correct=is_correct,
+                student_answer=student_answer,
+                feedback=str(payload.get("feedback", "Correcao concluida.")),
+                error=payload.get("error"),
+                correct_answer=payload.get("correct_answer"),
+                tip=payload.get("tip"),
+                steps=payload.get("steps") if isinstance(payload.get("steps"), list) else None,
+            )
+            return CorrectionResult(is_correct=is_correct, feedback=feedback, explanation=None)
+        except json.JSONDecodeError:
+            fallback = cleaned[:900] if cleaned else "Nao foi possivel analisar a resposta."
+            return CorrectionResult(is_correct=False, feedback=fallback, explanation=None)
 
-Com isto, o bot volta a colocar o negrito em todos os dados e em cada linha da resolução algébrica, mantendo a estrutura limpa e fácil de ler que conseguimos atingir. Pode fazer o deploy!
+    def _format_feedback(
+        self,
+        is_correct: bool,
+        student_answer: str,
+        feedback: str,
+        error: str | None,
+        correct_answer: str | None,
+        tip: str | None,
+        steps: list | None,
+    ) -> str:
+        if settings.gemini_correction_style.lower() != "detailed":
+            return feedback
+
+        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
+        lines = [
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📊 RESULTADO: {result_label}",
+            "",
+            "📝 Sua resposta:",
+            student_answer.strip() or "(nao informada)",
+            "",
+        ]
+
+        if not is_correct and error:
+            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
+
+        if correct_answer:
+            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
+
+        if tip:
+            lines.extend(["💡 Dica:", str(tip).strip(), ""])
+
+        if steps:
+            lines.append("📖 Passo a passo:")
+            for index, step in enumerate(steps, start=1):
+                lines.append(f"{index}. {str(step).strip()}")
+                lines.append("") # Respiro entre os passos principais
+
+        if feedback and (is_correct or not error):
+            lines.extend(["📚 Comentario:", feedback.strip(), ""])
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        return "\n".join(lines).strip()
