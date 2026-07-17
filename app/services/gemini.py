@@ -118,80 +118,22 @@ class GeminiService:
             "- Responda em portugues brasileiro, tom didatico e direto.\n"
             "- No campo 'steps', NÃO coloque números no início das frases. O sistema já enumera automaticamente.\n"
             "- Abrevie os subscritos (ex: 'm_p' em vez de 'm_pessoa').\n"
-            "- Matemática padrão BR: use vírgula para decimais (ex: 6,72) e ponto para multiplicação (ex: 200 . 4). NUNCA use asterisco (*).\n"
+            "- Matemática padrão BR: use vírgula para decimais (ex: 6,72) e ponto para multiplicação (ex: 200 . 4). NUNCA use asterisco (*) para multiplicar.\n"
             "- Use o símbolo Δ para variações (ex: ΔT).\n"
-            "- NÃO USE asteriscos (*) para negrito. Escreva o texto e as fórmulas normalmente sem marcações.\n"
+            "- USE formatação em negrito (asteriscos `*`) APENAS para destacar cada linha de cálculo, fórmula ou dados, fechando o asterisco linha a linha. Exemplo: *v = 15 m/s* ou *v² = v_0² + 2 . a . ΔS*.\n"
             "- ESTRUTURA DOS PASSOS (MUITO IMPORTANTE):\n"
             "  1. O passo de 'Dados' DEVE ter cada informação em uma linha diferente, usando a quebra de linha (\\n) dentro da string do JSON.\n"
             "  2. O passo de 'Cálculos' DEVE agrupar TODA a evolução algébrica em um ÚNICO passo. Use a quebra de linha (\\n) para separar cada etapa da equação, sem criar novos passos no array.\n"
             "- Retorne APENAS JSON valido com os campos:\n"
             '  {"is_correct": true|false, "feedback": "texto curto", "error": "onde errou ou null", '
             '"correct_answer": "resposta correta", "tip": "dica objetiva", '
-            '"steps": ["Dados:\\nv_0 = 0 m/s\\nv = 15 m/s\\nΔS = 0,75 m", "Fórmula: v² = v_0² + 2 . a . ΔS", "Resolução:\\n15² = 0² + 2 . a . 0,75\\n225 = 1,5 . a\\na = 225 / 1,5\\na = 150 m/s²"]}\n'
+            '"steps": ["Dados:\\n*v_0 = 0 m/s*\\n*v = 15 m/s*\\n*ΔS = 0,75 m*", "Conversão de unidades:\\n*v = 54 / 3,6 = 15 m/s*", "Fórmula de Torricelli:\\n*v² = v_0² + 2 . a . ΔS*", "Resolução:\\n*15² = 0² + 2 . a . 0,75*\\n*225 = 1,5 . a*\\n*a = 225 / 1,5*\\n*a = 150 m/s²*"]}\n'
         )
 
     def _parse_response(self, text: str, student_answer: str) -> CorrectionResult:
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-        try:
-            payload = json.loads(cleaned)
-            is_correct = bool(payload.get("is_correct"))
-            feedback = self._format_feedback(
-                is_correct=is_correct,
-                student_answer=student_answer,
-                feedback=str(payload.get("feedback", "Correcao concluida.")),
-                error=payload.get("error"),
-                correct_answer=payload.get("correct_answer"),
-                tip=payload.get("tip"),
-                steps=payload.get("steps") if isinstance(payload.get("steps"), list) else None,
-            )
-            return CorrectionResult(is_correct=is_correct, feedback=feedback, explanation=None)
-        except json.JSONDecodeError:
-            fallback = cleaned[:900] if cleaned else "Nao foi possivel analisar a resposta."
-            return CorrectionResult(is_correct=False, feedback=fallback, explanation=None)
+            cleaned = re.sub(r"^
+http://googleusercontent.com/immersive_entry_chip/0
 
-    def _format_feedback(
-        self,
-        is_correct: bool,
-        student_answer: str,
-        feedback: str,
-        error: str | None,
-        correct_answer: str | None,
-        tip: str | None,
-        steps: list | None,
-    ) -> str:
-        if settings.gemini_correction_style.lower() != "detailed":
-            return feedback
-
-        result_label = "Correto ✅" if is_correct else "Incorreto ❌"
-        lines = [
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"📊 RESULTADO: {result_label}",
-            "",
-            "📝 Sua resposta:",
-            student_answer.strip() or "(nao informada)",
-            "",
-        ]
-
-        if not is_correct and error:
-            lines.extend(["❌ Onde errou:", str(error).strip(), ""])
-
-        if correct_answer:
-            lines.extend(["✅ Resposta correta:", str(correct_answer).strip(), ""])
-
-        if tip:
-            lines.extend(["💡 Dica:", str(tip).strip(), ""])
-
-        if steps:
-            lines.append("📖 Passo a passo:")
-            for index, step in enumerate(steps, start=1):
-                lines.append(f"{index}. {str(step).strip()}")
-                lines.append("") # Respiro entre os passos principais
-
-        if feedback and (is_correct or not error):
-            lines.extend(["📚 Comentario:", feedback.strip(), ""])
-
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        return "\n".join(lines).strip()
+Com isto, o bot volta a colocar o negrito em todos os dados e em cada linha da resolução algébrica, mantendo a estrutura limpa e fácil de ler que conseguimos atingir. Pode fazer o deploy!
