@@ -4,6 +4,7 @@ import re
 from google import genai
 from app.config import settings
 from app.models.schemas import CorrectionResult
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class GeminiService:
     def _get_client(self):
         return genai.Client(api_key=settings.gemini_api_key)
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def correct_answer(
         self,
         question_image_bytes: bytes | None,
