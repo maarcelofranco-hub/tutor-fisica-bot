@@ -54,11 +54,11 @@ class GeminiService:
                 }
             })
 
-        # Configuração de velocidade: max_output_tokens limita o tamanho e temperature 0.1 garante foco matemático
+        # Aumento do max_output_tokens para 500 para evitar cortes no JSON
         response = client.models.generate_content(
             model=self.model_name, 
             contents=contents,
-            config={"max_output_tokens": 300, "temperature": 0.1}
+            config={"max_output_tokens": 500, "temperature": 0.1}
         )
         return self._parse_response(response.text or "", student_answer)
 
@@ -89,13 +89,5 @@ class GeminiService:
 
     def _parse_response(self, response_text: str, original_answer: str) -> CorrectionResult:
         try:
-            clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.MULTILINE)
-            data = json.loads(clean_text)
-            return CorrectionResult(
-                is_correct=data.get("is_correct", False),
-                feedback=data.get("feedback", "Sem feedback"),
-                explanation=data.get("explanation", "")
-            )
-        except Exception as e:
-            logger.error(f"Erro ao processar resposta do Gemini: {e}")
-            return CorrectionResult(is_correct=False, feedback="Erro ao processar correção.", explanation=f"O modelo retornou: {response_text}")
+            # Remove blocos de markdown
+            clean_text = re.sub(r'^```json\s*|\s*
