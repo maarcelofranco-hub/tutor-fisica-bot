@@ -116,14 +116,35 @@ class QuestionProvider:
         return "local"
 
     def _provider(self):
-        # 🚀 REMOVIDO o self.drive.refresh_cache() daqui! 
-        # Agora ele devolve o cache que já está na memória instantaneamente.
         return self.drive if self.mode == "drive" else self.local
 
-    def refresh(self) -> None:
-        # O refresh agora só acontece quando for chamado de propósito (ex: na varredura de 6h)
+    # ==============================================================
+    # 🎯 AQUI ESTÁ A MÁGICA: O REFRESH AGORA É ASSÍNCRONO E CHAMA O GEMINI
+    # ==============================================================
+    async def refresh(self) -> None:
+        # 1. Atualiza o cache do Google Drive (baixa as fotos novas)
         if self.mode == "drive":
             self.drive.refresh_cache()
+
+        # 2. GATILHO MÁGICO DO GEMINI: Cria as resoluções em background
+        # Importado aqui dentro para não gerar erro de importação circular
+        from app.services.gemini import GeminiService
+        import logging
+        
+        log = logging.getLogger(__name__)
+        gemini_service = GeminiService()
+        
+        log.info("Iniciando varredura: Checando e pré-gerando resoluções em LaTeX pelo Gemini...")
+        
+        for topic in self.list_topics():
+            for question in self.list_questions(topic):
+                try:
+                    # O get_or_create já checa: se existe, ignora; se não, gera!
+                    await gemini_service.get_or_create_resolution_image(question.id)
+                except Exception as e:
+                    log.error(f"Erro ao pré-gerar resolução para {question.id}: {e}")
+                    
+        log.info("Varredura de resoluções concluída com sucesso!")
 
     def list_topics(self) -> list[str]:
         return self._provider().list_topics()
