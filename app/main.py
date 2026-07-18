@@ -5,12 +5,16 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from app.api.test import router as test_router
 from app.api.webhook import router as webhook_router
 from app.database import init_db
 from app.logging_config import setup_logging
 from app.config import settings
 from app.services.message_sender import MessageSender
+
+# Importamos o question_provider para rodar a varredura e o Gemini!
+from app.services.question_provider import question_provider 
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +31,17 @@ async def keep_alive():
             await asyncio.sleep(600)  # Intervalo de 10 minutos
 
 async def run_warmup_job():
-    logger.info("Executando tarefa agendada de pre-upload (warmup)...")
-    sender = MessageSender()
+    logger.info("Executando varredura no Drive e tarefa de pre-upload (20 min)...")
     try:
+        # 1. Puxa do Drive e aciona o Gemini para gerar as resoluções em LaTeX
+        await question_provider.refresh()
+        
+        # 2. Sobe as imagens (questões + resoluções) para o WhatsApp e salva no SQL
+        sender = MessageSender()
         await sender.warm_up_cache_on_whatsapp()
+        
     except Exception as e:
-        logger.error(f"Erro no warmup automático: {e}")
+        logger.error(f"Erro na varredura/warmup automático: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,7 +53,11 @@ async def lifespan(app: FastAPI):
     
     # Inicia o agendador de cache
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_warmup_job, 'interval', hours=6)
+    
+    # =========================================================
+    # 🎯 ALTERADO PARA 20 MINUTOS AQUI!
+    # =========================================================
+    scheduler.add_job(run_warmup_job, 'interval', minutes=20)
     scheduler.add_job(run_warmup_job, 'date')  # Roda uma vez no boot
     scheduler.start()
     
