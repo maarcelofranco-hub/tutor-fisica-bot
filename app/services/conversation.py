@@ -48,29 +48,33 @@ class ConversationService:
 
     async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
         """
-        Processa a resolução do aluno usando o método correto do OCRService.
+        Processa a resolução do aluno, compara com o gabarito e envia a resolução oficial.
         """
-        await self.messages.send_text(contact.phone, "Recebi sua resolução! Estou analisando...")
+        await self.messages.send_text(contact.phone, "Recebi sua resolução! Analisando...")
         
         try:
-            # Usamos o método extract_text que existe no seu OCRService
-            # Certifique-se de que message.image_bytes contenha os bytes da imagem
-            texto_extraido = await self.ocr.extract_text(message.image_bytes, message.mime_type or "image/jpeg")
+            # 1. Extrai o texto da imagem enviada pelo aluno
+            texto_aluno = await self.ocr.extract_text(message.image_bytes, message.mime_type or "image/jpeg")
             
-            # Aqui você pode enviar o texto para o Gemini comparar com o gabarito
-            # feedback = await self.gemini.analisar_resposta(texto_extraido, session.current_question_id)
-            # await self.messages.send_text(contact.phone, feedback)
+            # 2. Garante que a resolução oficial esteja pronta/cacheada usando seu método existente
+            await self.gemini.get_or_create_resolution_image(session.current_question_id)
             
-            # Como a imagem da resolução já está no banco/sistema, enviamos ela após a análise
+            # 3. Compara a resposta do aluno com o gabarito usando seu método existente
+            feedback = await self.gemini.correct_answer(texto_aluno, session.current_question_id)
+            
+            # 4. Envia o feedback da comparação
+            await self.messages.send_text(contact.phone, feedback)
+            
+            # 5. Envia a imagem da resolução oficial que já está "no pente"
             await self.messages.send_question_image(
                 contact.phone, 
-                "Aqui está a resolução correta para conferência:", 
+                "Resolução oficial para conferência:", 
                 question_id=session.current_question_id
             )
             
         except Exception as e:
             logger.error(f"Erro ao processar resolução: {e}")
-            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Pode enviar novamente?")
+            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Tente novamente.")
 
     async def _send_welcome_message(self, phone: str) -> None:
         msg = "🍎 *Olá! Sou seu tutor de Física.* Escolha um tema para começar."
@@ -87,7 +91,7 @@ class ConversationService:
             db.commit()
             await self._send_next_question(db, contact, session)
         else:
-            await self.messages.send_text(contact.phone, "Tema não encontrado. Tente outro.")
+            await self.messages.send_text(contact.phone, "Tema não encontrado. Escolha um da lista.")
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
