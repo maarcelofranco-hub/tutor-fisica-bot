@@ -1,17 +1,15 @@
 import logging
-import unicodedata
-from app.services.message_sender import MessageSender
+from app.services.conversation import conversation_service
+from app.models.schemas import IncomingMessage
+from app.database import get_db
 
 logger = logging.getLogger(__name__)
 
-def normalizar_texto(texto: str) -> str:
-    """Remove acentos e converte para minúsculas."""
-    texto = texto.lower()
-    return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-
-async def handle_message(data: dict, sender: MessageSender):
+# Mantemos o 'sender' na assinatura apenas para não quebrar o webhook, 
+# mas todo o envio será feito pelo conversation_service agora!
+async def handle_message(data: dict, sender=None):
     try:
-        # 1. Validação de segurança: verifica se existem dados de mensagem
+        # 1. Extração segura de dados para não dar "list index out of range"
         entry = data.get("entry", [])
         if not entry: return
         
@@ -21,32 +19,47 @@ async def handle_message(data: dict, sender: MessageSender):
         value = changes[0].get("value", {})
         messages = value.get("messages", [])
         
-        # Ignora eventos que não contêm mensagens (ex: status de entrega)
         if not messages: return 
         
-        message = messages[0]
-        phone = message.get("from")
-        text_raw = message.get("text", {}).get("body", "")
-        text_norm = normalizar_texto(text_raw)
-
-        logger.info("Processando mensagem de %s: '%s'", phone, text_raw)
-
-        # 2. Fluxo de Saudação
-        if any(s in text_norm for s in ["ola", "oi", "bom dia", "boa tarde"]):
-            logger.info("Saudação detectada, enviando menu.")
-            # O send_themes_menu já é a função que busca e envia o menu
-            if not await sender.send_themes_menu(phone):
-                await sender.send_text(phone, "Menu indisponível no momento.")
-            return
-
-        # 3. Fluxo de Seleção de Tema
-        if "energia" in text_norm and "mecanica" in text_norm:
-            await sender.send_text(phone, "Carregando questão de Energia Mecânica...")
-            # Aqui entrará a lógica de envio da questão
-            return
-
-        # 4. Fallback (Caso não entenda)
-        await sender.send_text(phone, "Não entendi. Digite 'Ola' para ver o menu ou um tema de física.")
+        message_data = messages[0]
+        phone = message_data.get("from")
+        text_raw = message_data.get("text", {}).get("body", "")
+        message_id = message_data.get("id")
         
+        # Extrair nome do contato
+        contacts = value.get("contacts", [])
+        contact_name = contacts[0].get("profile", {}).get("name") if contacts else ""
+        
+        # Extrair mídia caso o aluno mande foto da resolução (isso garante que a correção via imagem funcione!)
+        media_id = None
+        media_mime_type = None
+        
+        if "image" in message_data:
+            media_id = message_data["image"].get("id")
+            media_mime_type = message_data["image"].get("mime_type")
+        elif "document" in message_data:
+            media_id = message_data["document"].get("id")
+            media_mime_type = message_data["document"].get("mime_type")
+            
+        logger.info("Encaminhando mensagem de %s para o ConversationService: '%s'", phone, text_raw)
+
+        # 2. Monta o formato exato que o seu conversation.py exige
+        incoming_msg = IncomingMessage(
+            phone=phone,
+            text=text_raw,
+            contact_name=contact_name,
+            message_id=message_id,
+            media_id=media_id,
+            media_mime_type=media_mime_type
+        )
+        
+        # 3. Conecta no banco e PASSA A BOLA para o verdadeiro cérebro do bot
+        db_generator = get_db()
+        db = next(db_generator)
+        try:
+            await conversation_service.handle_message(db, incoming_msg)
+        finally:
+            db.close()
+            
     except Exception as e:
         logger.error("Erro crítico no handler: %s", e)
