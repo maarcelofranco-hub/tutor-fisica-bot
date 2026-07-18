@@ -32,7 +32,7 @@ class ConversationService:
         
         msg_text = (message.text or "").lower().strip()
         
-        # LOGICA MANTIDA: Apenas a saudação do tutor (texto), sem tentar baixar arquivos
+        # Comandos de reset/saudação
         if msg_text in ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "menu", "reset", "inicio"]:
             await self._send_welcome_message(contact.phone)
             session.state = ConversationState.AWAITING_TOPIC.value
@@ -67,6 +67,8 @@ class ConversationService:
             await self._handle_redo_decision(db, contact, session, message)
             return
 
+        # MENU PROATIVO: Se nada for reconhecido, envia o menu e reseta o estado
+        logger.info(f"Entrada '{msg_text}' não reconhecida. Enviando menu proativo.")
         await self._reset_to_topic_selection(db, session)
 
     async def _send_welcome_message(self, phone: str) -> None:
@@ -82,7 +84,6 @@ class ConversationService:
         await self.messages.send_text(phone, msg)
 
     async def _send_topic_menu(self, phone: str) -> None:
-        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         temas = self.questions.list_topics()
         
         menu_organizado = {}
@@ -92,7 +93,7 @@ class ConversationService:
                 area = partes[0].strip()
                 nome_tema = partes[1].strip()
             else:
-                area = "OUTROS"
+                area = "GERAL"
                 nome_tema = tema
             
             if area not in menu_organizado:
@@ -102,9 +103,9 @@ class ConversationService:
         msg = "*Escolha um tema para começar:*\n"
         
         for area in sorted(menu_organizado.keys()):
-            msg += f"\n*{area.capitalize()}*\n"
+            msg += f"\n*{area.upper()}*\n"
             for t in sorted(menu_organizado[area]):
-                msg += f"• {t}\n"
+                msg += f"- {t}\n"
                 
         msg += "\nQual tema você quer estudar agora?"
         await self.messages.send_text(phone, msg)
@@ -115,9 +116,7 @@ class ConversationService:
             await self._send_topic_menu(contact.phone)
             return
             
-        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         topics = self.questions.list_topics()
-        
         resolved_topic = None
         for t in topics:
             nome_limpo = t.split("-", 1)[-1].strip().lower()
@@ -221,90 +220,4 @@ class ConversationService:
                 await self._reset_to_topic_selection(db, session, send_menu=False)
             return
         await self.messages.send_text(contact.phone, settings.topic_completed_message)
-        await self._reset_to_topic_selection(db, session)
-
-    def _clear_topic_progress(self, db: Session, contact_id: int, topic: str) -> None:
-        db.query(StudentProgress).filter(StudentProgress.contact_id == contact_id, StudentProgress.topic == topic).delete()
-        db.commit()
-
-    async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
-        topic = session.current_topic
-        if not topic:
-            return False
-        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
-        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(StudentProgress.contact_id == contact.id, StudentProgress.topic == topic)}
-        next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
-        if not next_question:
-            return False
-        await self._send_question(contact.phone, next_question)
-        session.current_question_id = next_question.id
-        session.current_question_name = next_question.name
-        session.state = ConversationState.AWAITING_ANSWER.value
-        db.commit()
-        return True
-
-    # MANTER ESTA CORREÇÃO: Passando apenas o ID!
-    async def _send_question(self, phone: str, question: Question) -> None:
-        await self.messages.send_question_image(
-            phone=phone, 
-            caption=question.name,
-            question_id=question.id
-        )
-
-    async def _reset_to_topic_selection(self, db: Session, session: StudentSession, send_menu: bool = True) -> None:
-        session.state = ConversationState.AWAITING_TOPIC.value
-        session.current_topic = None
-        session.current_question_id = None
-        session.current_question_name = None
-        db.commit()
-        contact = session.contact
-        if contact and send_menu:
-            await self._send_topic_menu(contact.phone)
-
-    def _get_or_create_contact(self, db: Session, message: IncomingMessage) -> Contact:
-        from app.utils.phone import normalize_phone
-        message.phone = normalize_phone(message.phone)
-        contact = db.query(Contact).filter(Contact.phone == message.phone).one_or_none()
-        if contact:
-            if message.contact_name and not contact.display_name:
-                contact.display_name = message.contact_name
-            return contact
-        contact = Contact(phone=message.phone, display_name=message.contact_name)
-        db.add(contact)
-        db.commit()
-        db.refresh(contact)
-        session = StudentSession(contact_id=contact.id)
-        db.add(session)
-        db.commit()
-        return contact
-
-    def _get_or_create_session(self, db: Session, contact: Contact) -> StudentSession:
-        session = db.query(StudentSession).filter(StudentSession.contact_id == contact.id).one_or_none()
-        if session:
-            session.contact = contact
-            return session
-        session = StudentSession(contact_id=contact.id)
-        db.add(session)
-        db.commit()
-        db.refresh(session)
-        session.contact = contact
-        return session
-
-    def _normalize_decision(self, text: str | None) -> str | None:
-        if not text:
-            return None
-        normalized = text.strip().lower()
-        if normalized in self.YES_WORDS:
-            return "yes"
-        if normalized in self.NO_WORDS:
-            return "no"
-        return None
-
-    def _looks_like_topic(self, text: str | None) -> bool:
-        if not text:
-            return False
-        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
-        topics = self.questions.list_topics()
-        return any(labels_match(item, text) for item in topics)
-
-conversation_service = ConversationService()
+        await self._reset_to_topic_selection(db, session
