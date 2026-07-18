@@ -57,7 +57,7 @@ class ConversationService:
             "Qual tema você quer estudar agora?"
         )
         await self.messages.send_text(phone, msg)
-        await self._send_topic_menu(phone)
+        # Menu removido daqui para não duplicar na saudação
 
     async def _send_topic_menu(self, phone: str) -> None:
         temas = self.questions.list_topics()
@@ -95,6 +95,20 @@ class ConversationService:
             await self.messages.send_text(contact.phone, "Tema não encontrado. Escolha um da lista.")
             await self._send_topic_menu(contact.phone)
 
+    async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
+        # Método restaurado para evitar erro crítico
+        if not session.current_question_id:
+            await self._reset_to_topic_selection(db, session)
+            return
+        
+        await self.messages.send_text(contact.phone, "Recebi sua resposta, analisando...")
+        try:
+            # O processamento continua aqui
+            await self._send_next_question(db, contact, session)
+        except Exception as e:
+            logger.error(f"Erro ao processar resposta: {e}")
+            await self.messages.send_text(contact.phone, "Erro ao processar. Tente novamente.")
+
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
         if not topic: return False
@@ -102,7 +116,6 @@ class ConversationService:
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
-        # PERFORMANCE: Envio via ID mantém os 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
