@@ -11,24 +11,33 @@ class MessageSender:
     def __init__(self) -> None:
         self.whatsapp = WhatsAppService()
 
+    async def warm_up_cache_on_whatsapp(self) -> None:
+        """
+        Pré-carrega as imagens no cache para garantir os 4 segundos de resposta.
+        """
+        from app.services.question_provider import question_provider
+        logger.info("Iniciando pré-carregamento (warmup) de imagens...")
+        
+        for topic in question_provider.list_topics():
+            for question in question_provider.list_questions(topic):
+                # Forçamos o processamento para preencher o cache do banco
+                await self.send_question_image(phone="00000000000", caption="warmup", question_id=question.id)
+        
+        logger.info("Warmup concluído com sucesso!")
+
     async def send_text(self, phone: str, text: str) -> None:
         outbox.add_text(phone, text)
         logger.info("OUT [%s] text: %s", phone, text[:160])
         if self.whatsapp.is_configured:
             await self.whatsapp.send_text(phone, text)
 
-    # --- NOVO MÉTODO PARA A RESOLUÇÃO DE ELITE ---
     async def send_image(self, phone: str, image_path: str, caption: str = "") -> None:
-        """
-        Envia uma imagem gerada localmente (resolução de elite) para o WhatsApp.
-        """
         if not self.whatsapp.is_configured:
             return
 
         with open(image_path, "rb") as f:
             image_bytes = f.read()
         
-        # Usa o método de upload que você já tem no seu WhatsAppService
         media_id = await self.whatsapp._upload_media(image_bytes, "image/png")
         await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
         
@@ -50,7 +59,7 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
-        # 1. OLHA O CACHE PRIMEIRO
+        # 1. Tenta pegar do cache (o que garante os 4s)
         if question_id:
             with next(get_db()) as db:
                 cached = db.query(MediaCache).filter(MediaCache.drive_id == question_id).first()
