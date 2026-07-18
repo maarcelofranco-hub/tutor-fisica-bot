@@ -53,19 +53,22 @@ class ConversationService:
         await self.messages.send_text(contact.phone, "Recebi sua resolução! Analisando...")
         
         try:
-            # 1. Extrai o texto da imagem enviada pelo aluno
-            texto_aluno = await self.ocr.extract_text(message.image_bytes, message.mime_type or "image/jpeg")
+            # CORREÇÃO: Usando media_mime_type conforme definido em schemas.py
+            mime = message.media_mime_type or "image/jpeg"
             
-            # 2. Garante que a resolução oficial esteja pronta/cacheada usando seu método existente
+            # 1. Extrai o texto da imagem enviada pelo aluno
+            texto_aluno = await self.ocr.extract_text(message.image_bytes, mime)
+            
+            # 2. Garante que a resolução oficial esteja pronta/cacheada
             await self.gemini.get_or_create_resolution_image(session.current_question_id)
             
-            # 3. Compara a resposta do aluno com o gabarito usando seu método existente
+            # 3. Compara a resposta do aluno com o gabarito
             feedback = await self.gemini.correct_answer(texto_aluno, session.current_question_id)
             
             # 4. Envia o feedback da comparação
             await self.messages.send_text(contact.phone, feedback)
             
-            # 5. Envia a imagem da resolução oficial que já está "no pente"
+            # 5. Envia a imagem da resolução oficial
             await self.messages.send_question_image(
                 contact.phone, 
                 "Resolução oficial para conferência:", 
