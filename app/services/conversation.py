@@ -1,5 +1,6 @@
 import logging
 import uuid
+import unicodedata
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import Contact, ConversationState, StudentProgress, StudentSession
@@ -46,47 +47,44 @@ class ConversationService:
             await self._handle_answer(db, contact, session, message)
             return
 
-    async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
-        """
-        Processa a resolução do aluno, compara com o gabarito e envia a resolução oficial.
-        """
-        await self.messages.send_text(contact.phone, "Recebi sua resolução! Analisando...")
-        
-        try:
-            # CORREÇÃO: Usando media_mime_type conforme definido em schemas.py
-            mime = message.media_mime_type or "image/jpeg"
-            
-            # 1. Extrai o texto da imagem enviada pelo aluno
-            texto_aluno = await self.ocr.extract_text(message.image_bytes, mime)
-            
-            # 2. Garante que a resolução oficial esteja pronta/cacheada
-            await self.gemini.get_or_create_resolution_image(session.current_question_id)
-            
-            # 3. Compara a resposta do aluno com o gabarito
-            feedback = await self.gemini.correct_answer(texto_aluno, session.current_question_id)
-            
-            # 4. Envia o feedback da comparação
-            await self.messages.send_text(contact.phone, feedback)
-            
-            # 5. Envia a imagem da resolução oficial
-            await self.messages.send_question_image(
-                contact.phone, 
-                "Resolução oficial para conferência:", 
-                question_id=session.current_question_id
-            )
-            
-        except Exception as e:
-            logger.error(f"Erro ao processar resolução: {e}")
-            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Tente novamente.")
-
     async def _send_welcome_message(self, phone: str) -> None:
-        msg = "🍎 *Olá! Sou seu tutor de Física.* Escolha um tema para começar."
+        msg = (
+            "🍎 *Olá! Sou seu tutor de Física.*\n\n"
+            "Para começarmos, siga estes passos:\n"
+            "1️⃣ Digite o nome do tema ou assunto que deseja estudar.\n"
+            "2️⃣ Eu buscarei as melhores questões para você.\n"
+            "3️⃣ Resolva e envie a resposta para correção imediata.\n\n"
+            "Qual tema você quer estudar agora?"
+        )
+        await self.messages.send_text(phone, msg)
+        await self._send_topic_menu(phone)
+
+    async def _send_topic_menu(self, phone: str) -> None:
+        temas = self.questions.list_topics()
+        menu_organizado = {}
+        for tema in temas:
+            area = tema.split("-")[0].strip() if "-" in tema else "GERAL"
+            nome = tema.split("-")[1].strip() if "-" in tema else tema
+            if area not in menu_organizado: menu_organizado[area] = []
+            menu_organizado[area].append(nome)
+        
+        msg = "*Escolha um tema para começar:*\n"
+        for area in sorted(menu_organizado.keys()):
+            msg += f"\n*{area.upper()}*\n"
+            for t in sorted(menu_organizado[area]):
+                msg += f"• {t}\n"
         await self.messages.send_text(phone, msg)
 
     async def _handle_topic_selection(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
         topic_input = (message.text or "").strip().lower()
+        
+        def normalize(text):
+            return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn').lower()
+        
+        normalized_input = normalize(topic_input)
         topics = self.questions.list_topics()
-        resolved_topic = next((t for t in topics if t.split("-")[-1].strip().lower() == topic_input), None)
+        
+        resolved_topic = next((t for t in topics if normalize(t.split("-")[-1].strip()) == normalized_input), None)
         
         if resolved_topic:
             session.current_topic = resolved_topic
@@ -95,16 +93,21 @@ class ConversationService:
             await self._send_next_question(db, contact, session)
         else:
             await self.messages.send_text(contact.phone, "Tema não encontrado. Escolha um da lista.")
+            await self._send_topic_menu(contact.phone)
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
         if not topic: return False
-        next_question = next((q for q in self.questions.list_questions(topic)), None)
+        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(StudentProgress.contact_id == contact.id, StudentProgress.topic == topic)}
+        next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
+        # PERFORMANCE: Envio via ID mantém os 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
+        session.current_question_name = next_question.name
+        session.state = ConversationState.AWAITING_ANSWER.value
         db.commit()
         return True
 
@@ -127,6 +130,8 @@ class ConversationService:
     def _reset_to_topic_selection(self, db: Session, session: StudentSession) -> None:
         session.state = ConversationState.AWAITING_TOPIC.value
         db.commit()
+        if session.contact:
+            self._send_topic_menu(session.contact.phone)
 
     def _looks_like_topic(self, text: str | None) -> bool:
         if not text: return False
