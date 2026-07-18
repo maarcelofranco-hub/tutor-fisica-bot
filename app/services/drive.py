@@ -35,7 +35,12 @@ class DriveService:
         self.root_folder_id = settings.google_drive_root_folder_id
         self.themes_folder_name = settings.drive_themes_folder_name
         self.service = self._build_service()
+        
+        # 🚀 CACHES EM MEMÓRIA ADICIONADOS AQUI
         self._folder_cache: dict[str, str] = {}
+        self._topics_cache: list[str] | None = None
+        self._questions_cache: dict[str, list[Question]] = {}
+        self._menu_file_cache: DriveFile | None = None
 
     @property
     def is_configured(self) -> bool:
@@ -94,22 +99,40 @@ class DriveService:
         return credentials
 
     def refresh_cache(self) -> None:
+        """Limpa todos os caches em memória para permitir atualização controlada."""
         self._folder_cache.clear()
+        self._topics_cache = None
+        self._questions_cache.clear()
+        self._menu_file_cache = None
+        logger.info("Cache do DriveService completamente limpo.")
 
     def list_topics(self) -> list[str]:
         if not self.is_configured:
             return []
+            
+        # Retorna o cache se já foi listado anteriormente
+        if self._topics_cache is not None:
+            return self._topics_cache
+
         folders = self._list_child_folders(self.root_folder_id)
         reserved = normalize_label(self.themes_folder_name)
-        return sorted(
+        
+        self._topics_cache = sorted(
             folder.name
             for folder in folders
             if normalize_label(folder.name) != reserved
         )
+        return self._topics_cache
 
     def list_questions(self, topic: str) -> list[Question]:
         if not self.is_configured:
             return []
+        
+        # Procura a lista diretamente no cache em memória
+        normalized_topic = normalize_label(topic)
+        if normalized_topic in self._questions_cache:
+            return self._questions_cache[normalized_topic]
+
         topic_folder_id = self._find_topic_folder_id(topic)
         if not topic_folder_id:
             return []
@@ -143,6 +166,9 @@ class DriveService:
                     mime_type=item.get("mimeType", "image/jpeg"),
                 )
             )
+            
+        # Salva o resultado no cache antes de retornar
+        self._questions_cache[normalized_topic] = questions
         return questions
 
     def get_question_image(self, question_id: str) -> tuple[bytes, str]:
@@ -153,6 +179,11 @@ class DriveService:
     def get_themes_menu_file(self) -> DriveFile | None:
         if not self.is_configured:
             return None
+            
+        # Retorna o cache do menu se já existir
+        if self._menu_file_cache is not None:
+            return self._menu_file_cache
+
         themes_folder_id = self._find_folder_by_name(self.root_folder_id, self.themes_folder_name)
         if not themes_folder_id:
             logger.warning("Themes folder '%s' not found on Drive", self.themes_folder_name)
@@ -171,14 +202,20 @@ class DriveService:
             .execute()
         )
         files = response.get("files", [])
+        menu_file = None
         for item in files:
             if item.get("mimeType") == self.PDF_MIME:
-                return DriveFile(id=item["id"], name=item["name"], mime_type=self.PDF_MIME)
-        for item in files:
-            mime = item.get("mimeType", "")
-            if mime.startswith("image/"):
-                return DriveFile(id=item["id"], name=item["name"], mime_type=mime)
-        return None
+                menu_file = DriveFile(id=item["id"], name=item["name"], mime_type=self.PDF_MIME)
+                break
+        if not menu_file:
+            for item in files:
+                mime = item.get("mimeType", "")
+                if mime.startswith("image/"):
+                    menu_file = DriveFile(id=item["id"], name=item["name"], mime_type=mime)
+                    break
+                    
+        self._menu_file_cache = menu_file
+        return menu_file
 
     def download_file(self, file_id: str) -> tuple[bytes, str]:
         return self._download_file(file_id)
