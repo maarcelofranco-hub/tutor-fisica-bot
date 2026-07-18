@@ -1,26 +1,40 @@
 import logging
 from app.services.message_sender import MessageSender
-# Importe aqui outros serviços necessários, ex: a lógica de processamento de IA
 
 logger = logging.getLogger(__name__)
 
 async def handle_message(data: dict, sender: MessageSender):
-    """
-    Função principal que processa as mensagens recebidas do webhook.
-    """
     logger.info("Iniciando processamento da mensagem...")
     
     try:
-        # Aqui você coloca a lógica que extrai o texto/imagem da mensagem
-        # e decide o que responder usando o 'sender' (instância do MessageSender).
+        # Extrai os dados básicos da mensagem recebida da Meta
+        entry = data.get("entry", [])
+        if not entry: return
         
-        # Exemplo básico de estrutura:
-        # 1. Identificar o remetente
-        # 2. Verificar se é texto ou imagem
-        # 3. Chamar o serviço de IA ou lógica de física
-        # 4. Enviar a resposta via sender.send_text() ou sender.send_question_image()
+        changes = entry[0].get("changes", [])
+        if not changes: return
+        
+        value = changes[0].get("value", {})
+        messages = value.get("messages", [])
+        
+        if not messages: return
+        
+        message = messages[0]
+        phone = message.get("from")
+        text = message.get("text", {}).get("body", "").lower()
+        
+        logger.info(f"Texto recebido: {text}")
+
+        # Lógica de resposta
+        if "olá" in text or "oi" in text:
+            await sender.send_text(phone, "Olá! Sou seu tutor de Física. Digite o nome do tema para começar.")
+        else:
+            # Caso não seja saudação, tenta mostrar o menu de temas
+            success = await sender.send_themes_menu(phone)
+            if not success:
+                await sender.send_text(phone, "Não entendi. Digite um tema de física para começar.")
         
         logger.info("Mensagem processada com sucesso.")
-        
+            
     except Exception as e:
-        logger.error("Erro ao processar mensagem no handler: %s", e)
+        logger.error(f"Erro ao processar mensagem no handler: {e}")
