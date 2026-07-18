@@ -20,9 +20,9 @@ class MessageSender:
     async def send_question_image(
         self,
         phone: str,
-        image_bytes: bytes,
-        mime_type: str,
         caption: str,
+        image_bytes: bytes = None,
+        mime_type: str = None,
         image_url: str | None = None,
         question_id: str = None
     ) -> None:
@@ -33,7 +33,7 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
-        # 1. TENTA BUSCAR NO CACHE DO BANCO
+        # 1. OLHA O CACHE PRIMEIRO (Fração de segundo)
         if question_id:
             with next(get_db()) as db:
                 cached = db.query(MediaCache).filter(MediaCache.drive_id == question_id).first()
@@ -43,13 +43,22 @@ class MessageSender:
                     logger.info("LOG TEMPO: Envio via API concluído (%.2fs totais)", time.time() - start_time)
                     return
 
-        # 2. UPLOAD SE NÃO EXISTIR
+        # 2. SE NÃO TEM CACHE, AÍ SIM ELE BAIXA DO DRIVE (Leva os ~3 segundos)
+        if not image_bytes and question_id:
+            logger.info("Imagem não estava no cache. Baixando do Drive...")
+            from app.services.question_provider import question_provider
+            image_bytes, mime_type = question_provider.get_question_image(question_id)
+
+        if not image_bytes:
+            logger.error("Erro: Nenhuma imagem fornecida para envio.")
+            return
+
+        # 3. FAZ O UPLOAD E ENVIA (Leva os ~4 segundos adicionais)
         logger.info("Realizando UPLOAD da imagem para o WhatsApp...")
         media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
-        
         await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
         
-        # 3. SALVA NO CACHE
+        # 4. SALVA NO CACHE PARA A PRÓXIMA VEZ SER INSTANTÂNEO
         if question_id:
             with next(get_db()) as db:
                 new_cache = MediaCache(drive_id=question_id, whatsapp_id=media_id)
@@ -69,7 +78,7 @@ class MessageSender:
                     if db.query(MediaCache).filter(MediaCache.drive_id == q.id).first():
                         continue
                 
-                img_bytes, mime = question_provider.download_file(q.id)
+                img_bytes, mime = question_provider.get_question_image(q.id)
                 media_id = await self.whatsapp._upload_media(img_bytes, mime)
                 
                 with next(get_db()) as db:
@@ -90,7 +99,6 @@ class MessageSender:
         
         menu_file = question_provider.get_themes_menu_file()
         if not menu_file: 
-            logger.error("LATENCIA_ERRO: get_themes_menu_file() retornou None. O arquivo do menu não foi mapeado no provider.")
             return False
         
         logger.info("LOG TEMPO: Iniciando download do arquivo do menu do Drive...")
@@ -98,9 +106,13 @@ class MessageSender:
         instruction = "Escolha um tema. Resolva e me envie sua resposta!"
         
         if mime_type.startswith("image/"):
-            await self.send_question_image(phone, file_bytes, mime_type, instruction, question_id=menu_file.id)
-            logger.info("LOG TEMPO: Fluxo completo do menu executado em %.2fs", time.time() - start_menu_time)
+            await self.send_question_image(
+                phone, 
+                caption=instruction, 
+                image_bytes=file_bytes, 
+                mime_type=mime_type, 
+                question_id=menu_file.id
+            )
             return True
             
-        logger.error("LATENCIA_ERRO: O arquivo do menu foi encontrado, mas o tipo Mime recebido foi '%s' (esperado: image/*)", mime_type)
         return False
