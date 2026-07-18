@@ -11,12 +11,13 @@ from app.models.schemas import (
     TestMessageRequest,
     TopicsResponse,
 )
-from app.services.conversation import conversation_service
+from app.services.conversation import ConversationService # Corrigido aqui
 from app.services.outbox import outbox
 from app.services.question_provider import question_provider
 
 router = APIRouter(prefix="/test", tags=["test"])
-
+# Instancia o serviço para ser usado no roteador
+conversation_service = ConversationService() 
 
 @router.get("/topics", response_model=TopicsResponse)
 def list_topics():
@@ -32,6 +33,7 @@ async def send_test_message(payload: TestMessageRequest, db: Session = Depends(g
         text=payload.text,
         contact_name=payload.contact_name,
     )
+    # Agora o conversation_service está instanciado corretamente
     await conversation_service.handle_message(db, message)
     replies = outbox.get_messages(payload.phone)
     return {
