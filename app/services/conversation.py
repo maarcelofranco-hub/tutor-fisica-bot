@@ -97,12 +97,31 @@ class ConversationService:
             await self._send_topic_menu(contact.phone)
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
-        # Mantém a sua lógica de buscar questão e enviar via media_id
-        # ... (seu código de envio de imagem aqui) ...
+        topic = session.current_topic
+        if not topic: return False
+        
+        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(
+            StudentProgress.contact_id == contact.id, 
+            StudentProgress.topic == topic
+        )}
+        
+        next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
+        if not next_question: return False
+        
+        # O uso de send_question_image com question_id garante a performance que você definiu
+        await self.messages.send_question_image(
+            phone=contact.phone, 
+            caption=next_question.name, 
+            question_id=next_question.id
+        )
+        
+        session.current_question_id = next_question.id
+        session.current_question_name = next_question.name
+        session.state = ConversationState.AWAITING_ANSWER.value
+        db.commit()
         return True
 
     def _get_or_create_contact(self, db: Session, message: IncomingMessage) -> Contact:
-        # AQUI FOI A CORREÇÃO: Removido 'name=message.contact_name' para evitar o erro do banco
         contact = db.query(Contact).filter(Contact.phone == message.phone).one_or_none()
         if not contact:
             contact = Contact(phone=message.phone)
