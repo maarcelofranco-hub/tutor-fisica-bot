@@ -68,6 +68,17 @@ class MediaCache(Base):
     whatsapp_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
+# Nova tabela para o sistema de Resolução de Elite
+class QuestionResolution(Base):
+    __tablename__ = "question_resolutions"
+    
+    question_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    gabarito: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    resolucao_latex: Mapped[str | None] = mapped_column(Text, nullable=True)
+    imagem_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
