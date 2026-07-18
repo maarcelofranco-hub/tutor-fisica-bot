@@ -243,15 +243,13 @@ class ConversationService:
         db.commit()
         return True
 
-    # 🚀 CORREÇÃO AQUI: Passando o question.id para ativar o cache
+    # 🚀 CORREÇÃO FINAL AQUI: Apenas o ID é passado!
     async def _send_question(self, phone: str, question: Question) -> None:
-        image_bytes, mime_type = self.questions.get_question_image(question.id)
+        # Passa apenas o ID. O message_sender vai olhar o cache antes de tentar baixar do Drive!
         await self.messages.send_question_image(
             phone=phone, 
-            image_bytes=image_bytes, 
-            mime_type=mime_type, 
             caption=question.name,
-            question_id=question.id # <--- ID ENVIADO PARA O MESSAGE_SENDER
+            question_id=question.id
         )
 
     async def _reset_to_topic_selection(self, db: Session, session: StudentSession, send_menu: bool = True) -> None:
