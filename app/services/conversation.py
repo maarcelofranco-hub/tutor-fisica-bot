@@ -82,7 +82,7 @@ class ConversationService:
         await self.messages.send_text(phone, msg)
 
     async def _send_topic_menu(self, phone: str) -> None:
-        self.questions.refresh()
+        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         temas = self.questions.list_topics()
         
         menu_organizado = {}
@@ -115,7 +115,7 @@ class ConversationService:
             await self._send_topic_menu(contact.phone)
             return
             
-        self.questions.refresh()
+        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         topics = self.questions.list_topics()
         
         resolved_topic = None
@@ -231,7 +231,7 @@ class ConversationService:
         topic = session.current_topic
         if not topic:
             return False
-        self.questions.refresh()
+        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         answered_ids = {row.question_id for row in db.query(StudentProgress).filter(StudentProgress.contact_id == contact.id, StudentProgress.topic == topic)}
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question:
@@ -243,9 +243,8 @@ class ConversationService:
         db.commit()
         return True
 
-    # 🚀 CORREÇÃO FINAL AQUI: Apenas o ID é passado!
+    # MANTER ESTA CORREÇÃO: Passando apenas o ID!
     async def _send_question(self, phone: str, question: Question) -> None:
-        # Passa apenas o ID. O message_sender vai olhar o cache antes de tentar baixar do Drive!
         await self.messages.send_question_image(
             phone=phone, 
             caption=question.name,
@@ -304,7 +303,7 @@ class ConversationService:
     def _looks_like_topic(self, text: str | None) -> bool:
         if not text:
             return False
-        self.questions.refresh()
+        # self.questions.refresh()  # <-- REMOVIDO PARA DEIXAR INSTANTÂNEO
         topics = self.questions.list_topics()
         return any(labels_match(item, text) for item in topics)
 
