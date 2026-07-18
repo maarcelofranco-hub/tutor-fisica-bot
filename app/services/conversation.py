@@ -48,54 +48,32 @@ class ConversationService:
 
     async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
         """
-        Processa a resolução do aluno e dispara a correção via Gemini.
+        Processa a resolução do aluno usando o método correto do OCRService.
         """
-        await self.messages.send_text(contact.phone, "Recebi sua resolução! Estou processando a correção...")
+        await self.messages.send_text(contact.phone, "Recebi sua resolução! Estou analisando...")
         
         try:
-            # Chama o motor de análise (OCR/Gemini)
-            feedback = await self.ocr.analyze(message)
-            await self.messages.send_text(contact.phone, feedback)
+            # Usamos o método extract_text que existe no seu OCRService
+            # Certifique-se de que message.image_bytes contenha os bytes da imagem
+            texto_extraido = await self.ocr.extract_text(message.image_bytes, message.mime_type or "image/jpeg")
             
-            # Opcional: marca a questão como concluída no progresso
-            if session.current_question_id:
-                new_progress = StudentProgress(
-                    contact_id=contact.id, 
-                    topic=session.current_topic, 
-                    question_id=session.current_question_id
-                )
-                db.add(new_progress)
-                db.commit()
+            # Aqui você pode enviar o texto para o Gemini comparar com o gabarito
+            # feedback = await self.gemini.analisar_resposta(texto_extraido, session.current_question_id)
+            # await self.messages.send_text(contact.phone, feedback)
+            
+            # Como a imagem da resolução já está no banco/sistema, enviamos ela após a análise
+            await self.messages.send_question_image(
+                contact.phone, 
+                "Aqui está a resolução correta para conferência:", 
+                question_id=session.current_question_id
+            )
             
         except Exception as e:
             logger.error(f"Erro ao processar resolução: {e}")
-            await self.messages.send_text(contact.phone, "Houve um erro ao analisar sua resposta. Tente novamente.")
+            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Pode enviar novamente?")
 
     async def _send_welcome_message(self, phone: str) -> None:
-        msg = (
-            "🍎 *Olá! Sou seu tutor de Física.*\n\n"
-            "Para começarmos, siga estes passos:\n"
-            "1️⃣ Digite o nome do tema ou assunto que deseja estudar.\n"
-            "2️⃣ Eu buscarei as melhores questões para você.\n"
-            "3️⃣ Resolva e envie a resposta para correção imediata.\n\n"
-            "Qual tema você quer estudar agora?"
-        )
-        await self.messages.send_text(phone, msg)
-
-    async def _send_topic_menu(self, phone: str) -> None:
-        temas = self.questions.list_topics()
-        menu_organizado = {}
-        for tema in temas:
-            area = tema.split("-")[0].strip() if "-" in tema else "GERAL"
-            nome = tema.split("-")[1].strip() if "-" in tema else tema
-            if area not in menu_organizado: menu_organizado[area] = []
-            menu_organizado[area].append(nome)
-        
-        msg = "*Escolha um tema para começar:*\n"
-        for area in sorted(menu_organizado.keys()):
-            msg += f"\n*{area.upper()}*\n"
-            for t in sorted(menu_organizado[area]):
-                msg += f"• {t}\n"
+        msg = "🍎 *Olá! Sou seu tutor de Física.* Escolha um tema para começar."
         await self.messages.send_text(phone, msg)
 
     async def _handle_topic_selection(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
@@ -109,22 +87,17 @@ class ConversationService:
             db.commit()
             await self._send_next_question(db, contact, session)
         else:
-            await self.messages.send_text(contact.phone, "Desculpe, não encontrei esse tema. Por favor, escolha um tema da lista abaixo:")
-            await self._send_topic_menu(contact.phone)
+            await self.messages.send_text(contact.phone, "Tema não encontrado. Tente outro.")
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
         if not topic: return False
-        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(StudentProgress.contact_id == contact.id, StudentProgress.topic == topic)}
-        next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
+        next_question = next((q for q in self.questions.list_questions(topic)), None)
         if not next_question: return False
         
-        # Envio pelo ID, mantendo a performance de 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
-        session.current_question_name = next_question.name
-        session.state = ConversationState.AWAITING_ANSWER.value
         db.commit()
         return True
 
@@ -147,8 +120,6 @@ class ConversationService:
     def _reset_to_topic_selection(self, db: Session, session: StudentSession) -> None:
         session.state = ConversationState.AWAITING_TOPIC.value
         db.commit()
-        if session.contact:
-            self._send_topic_menu(session.contact.phone)
 
     def _looks_like_topic(self, text: str | None) -> bool:
         if not text: return False
