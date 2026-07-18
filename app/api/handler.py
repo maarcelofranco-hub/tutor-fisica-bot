@@ -1,9 +1,12 @@
 import logging
-from app.services.conversation import conversation_service
+from app.services.conversation import ConversationService # Importa a Classe
 from app.models.schemas import IncomingMessage
 from app.database import get_db
 
 logger = logging.getLogger(__name__)
+
+# Instancia o serviço aqui para ser usado globalmente neste arquivo
+conversation_service = ConversationService()
 
 # Mantemos o 'sender' na assinatura apenas para não quebrar o webhook, 
 # mas todo o envio será feito pelo conversation_service agora!
@@ -30,7 +33,7 @@ async def handle_message(data: dict, sender=None):
         contacts = value.get("contacts", [])
         contact_name = contacts[0].get("profile", {}).get("name") if contacts else ""
         
-        # Extrair mídia caso o aluno mande foto da resolução (isso garante que a correção via imagem funcione!)
+        # Extrair mídia caso o aluno mande foto da resolução
         media_id = None
         media_mime_type = None
         
