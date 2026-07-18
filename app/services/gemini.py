@@ -2,12 +2,18 @@ import base64
 import json
 import logging
 import re
+import os
 
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 
 from app.config import settings
 from app.models.schemas import CorrectionResult
+
+# Importamos o banco de dados e a classe de resolução que você criou
+from app.database import SessionLocal, QuestionResolution
+# Importamos a função que desenha o layout que você validou (2 colunas)
+from app.services.resolution_generator import generate_two_column_image
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +35,89 @@ class GeminiService:
             self.model = None
             logger.warning("GEMINI_API_KEY not set. Using mock correction mode.")
 
+    # ==========================================
+    # NOVO: FLUXO DE RESOLUÇÃO DE ELITE (IMAGEM)
+    # ==========================================
+    async def get_or_create_resolution_image(self, question_id: str, question_text: str) -> str:
+        """
+        Gera ou recupera a imagem de resolução da questão no formato 2 colunas.
+        """
+        db = SessionLocal()
+        try:
+            # 1. Verifica se já existe a imagem pronta no banco de dados
+            res = db.query(QuestionResolution).filter_by(question_id=question_id).first()
+            if res and res.imagem_path and os.path.exists(res.imagem_path):
+                logger.info(f"Imagem recuperada do cache: {res.imagem_path}")
+                return res.imagem_path
+
+            # 2. Se não existir, pede ao Gemini a estrutura validada
+            prompt = f"""
+            Resolva a questão de física como um professor. 
+            Sua resposta será convertida em uma imagem de duas colunas.
+            
+            Siga estritamente este formato:
+            
+            DADOS:
+            [Linha 1]
+            [Linha 2]
+            
+            RESOLUCAO:
+            [Passo 1 em LaTeX]
+            [Passo 2 em LaTeX]
+            
+            Exemplo de formato esperado:
+            DADOS:
+            v_0=0
+            v=20 m/s
+            a=2 m/s^2
+            \\Delta S=?
+            
+            RESOLUCAO:
+            v^2 = v_0^2 + 2 \\cdot a \\cdot \\Delta S
+            20^2 = 0 + 2 \\cdot 2 \\cdot \\Delta S
+            400 = 4 \\cdot \\Delta S
+            \\Delta S = 100 m
+            
+            Questão: {question_text}
+            """
+            
+            # Chama a API de forma assíncrona
+            response = await self.model.generate_content_async(prompt)
+            text = response.text
+            
+            # 3. Faz o parser dividindo nos blocos que definimos
+            parts = text.split("RESOLUCAO:")
+            dados = parts[0].replace("DADOS:", "").strip()
+            resolucao = parts[1].strip()
+            
+            # Garante que a pasta assets existe
+            os.makedirs("assets", exist_ok=True)
+            path = f"assets/res_{question_id}.png"
+            
+            # 4. Gera a imagem usando a função do matplotlib
+            generate_two_column_image(dados, resolucao, path)
+            
+            # 5. Salva no banco de dados
+            new_res = QuestionResolution(
+                question_id=question_id,
+                resolucao_latex=resolucao,
+                imagem_path=path
+            )
+            db.add(new_res)
+            db.commit()
+            
+            logger.info(f"Nova imagem gerada e salva: {path}")
+            return path
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar imagem de resolução: {e}")
+            return None
+        finally:
+            db.close()
+
+    # ==========================================
+    # FLUXO ANTIGO MANTIDO (CORREÇÃO DE TEXTO)
+    # ==========================================
     async def extract_text_from_image(self, image_bytes: bytes, mime_type: str) -> str:
         if not self.enabled:
             return "[modo teste] resposta extraida da imagem"
@@ -187,12 +276,4 @@ class GeminiService:
 
         if steps:
             lines.append("📖 Passo a passo:")
-            for index, step in enumerate(steps, start=1):
-                lines.append(f"{index}. {str(step).strip()}")
-                lines.append("") # Respiro entre os passos principais
-
-        if feedback and (is_correct or not error):
-            lines.extend(["📚 Comentario:", feedback.strip(), ""])
-
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        return "\n".join(lines).strip()
+            for index, step in enumerate(steps,
