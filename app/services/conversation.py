@@ -96,18 +96,47 @@ class ConversationService:
             await self._send_topic_menu(contact.phone)
 
     async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
-        # Método restaurado para evitar erro crítico
         if not session.current_question_id:
             await self._reset_to_topic_selection(db, session)
             return
         
-        await self.messages.send_text(contact.phone, "Recebi sua resposta, analisando...")
+        # 1. Feedback imediato de engajamento
+        await self.messages.send_text(contact.phone, "Recebi sua resolução! Analisando...")
+        
         try:
-            # O processamento continua aqui
-            await self._send_next_question(db, contact, session)
+            # 2. Processa a resposta via Gemini
+            analise_texto = await self.ocr.process_answer(message, session.current_question_id)
+            
+            # 3. Envia a foto da resolução em LaTeX já carregada no banco
+            # Certifique-se de que o método 'send_resolution_image' existe no seu MessageSender
+            await self.messages.send_resolution_image(
+                phone=contact.phone, 
+                question_id=session.current_question_id
+            )
+            
+            # 4. Envia a análise comparativa gerada pelo Gemini
+            await self.messages.send_text(contact.phone, analise_texto)
+
+            # 5. Salva o progresso para garantir que a questão não se repita
+            progress = StudentProgress(
+                contact_id=contact.id,
+                topic=session.current_topic,
+                question_id=session.current_question_id,
+                is_correct=True
+            )
+            db.add(progress)
+            db.commit()
+
+            # 6. Avança para a próxima questão
+            success = await self._send_next_question(db, contact, session)
+            
+            if not success:
+                await self.messages.send_text(contact.phone, "Parabéns! Você completou todas as questões deste tema.")
+                await self._reset_to_topic_selection(db, session)
+                
         except Exception as e:
             logger.error(f"Erro ao processar resposta: {e}")
-            await self.messages.send_text(contact.phone, "Erro ao processar. Tente novamente.")
+            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Tente novamente.")
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
@@ -116,6 +145,7 @@ class ConversationService:
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
+        # PERFORMANCE: Envio via ID mantém os 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
