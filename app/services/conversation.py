@@ -32,12 +32,15 @@ class ConversationService:
         
         msg_text = (message.text or "").lower().strip()
         
-        # Lista robusta de saudações - aceita qualquer uma que comece com estes termos
+        # Lógica inteligente de saudação e menu
         saudacoes = ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "menu", "reset", "inicio", "opa"]
         if any(msg_text.startswith(s) for s in saudacoes):
-            await self._send_welcome_message(contact.phone)
-            session.state = ConversationState.AWAITING_TOPIC.value
-            db.commit()
+            if session.state == ConversationState.AWAITING_TOPIC.value:
+                await self._send_topic_menu(contact.phone)
+            else:
+                await self._send_welcome_message(contact.phone)
+                session.state = ConversationState.AWAITING_TOPIC.value
+                db.commit()
             return
 
         if session.state == ConversationState.AWAITING_CONTINUE.value and msg_text in self.YES_WORDS:
@@ -68,16 +71,13 @@ class ConversationService:
             await self._handle_redo_decision(db, contact, session, message)
             return
 
-        # MENU PROATIVO: Se nada foi reconhecido, reseta para seleção de tópico e envia o menu
         logger.info(f"Entrada '{msg_text}' não reconhecida. Enviando menu proativo.")
         await self._reset_to_topic_selection(db, session)
 
     async def _send_welcome_message(self, phone: str) -> None:
-        msg = (
-            "🍎 *Olá! Sou seu tutor de Física.*\n\n"
-            "Para começarmos, digite o nome do tema que deseja estudar."
-        )
+        msg = "🍎 *Olá! Sou seu tutor de Física.*\n\nPara começarmos, digite o nome do tema que deseja estudar."
         await self.messages.send_text(phone, msg)
+        await self._send_topic_menu(phone)
 
     async def _send_topic_menu(self, phone: str) -> None:
         temas = self.questions.list_topics()
@@ -120,7 +120,6 @@ class ConversationService:
                 await self.messages.send_text(contact.phone, "Este tema ainda não tem questões cadastradas.")
                 await self._reset_to_topic_selection(db, session, send_menu=False)
         else:
-            # Não reconheceu o tema, envia o menu diretamente
             await self._send_topic_menu(contact.phone)
 
     async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
