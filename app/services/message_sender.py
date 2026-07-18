@@ -13,28 +13,43 @@ class MessageSender:
 
     async def warm_up_cache_on_whatsapp(self) -> None:
         """
-        Pré-carrega as imagens no cache sem tentar disparar mensagens para telefones inválidos.
+        Pré-carrega as imagens (questões e resoluções) no cache sem tentar disparar mensagens para telefones inválidos.
         Isso garante a performance de 4 segundos nas próximas requisições.
         """
         from app.services.question_provider import question_provider
-        logger.info("Iniciando processamento de cache (warmup)...")
+        logger.info("Iniciando processamento de cache (warmup) para questões e resoluções...")
         
         for topic in question_provider.list_topics():
             for question in question_provider.list_questions(topic):
-                # 1. Obtém os bytes da imagem
+                # ==========================================
+                # 1. CACHE DA IMAGEM DA QUESTÃO
+                # ==========================================
                 image_bytes, mime_type = question_provider.get_question_image(question.id)
                 
                 if image_bytes:
-                    # 2. Faz o upload para obter o media_id
-                    media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
-                    
-                    # 3. Salva no banco de dados para o cache
                     with next(get_db()) as db:
                         if not db.query(MediaCache).filter(MediaCache.drive_id == question.id).first():
+                            media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
                             new_cache = MediaCache(drive_id=question.id, whatsapp_id=media_id)
                             db.add(new_cache)
                             db.commit()
                             logger.info(f"Cache populado para a questão: {question.id}")
+
+                # ==========================================
+                # 2. CACHE DA IMAGEM DA RESOLUÇÃO (NOVO)
+                # ==========================================
+                # Assumindo que existe um método get_resolution_image no seu provider
+                res_bytes, res_mime_type = question_provider.get_resolution_image(question.id)
+                
+                if res_bytes:
+                    res_cache_id = f"{question.id}_res" # Sufixo para não misturar com a questão
+                    with next(get_db()) as db:
+                        if not db.query(MediaCache).filter(MediaCache.drive_id == res_cache_id).first():
+                            res_media_id = await self.whatsapp._upload_media(res_bytes, res_mime_type)
+                            new_res_cache = MediaCache(drive_id=res_cache_id, whatsapp_id=res_media_id)
+                            db.add(new_res_cache)
+                            db.commit()
+                            logger.info(f"Cache populado para a resolução: {question.id}")
         
         logger.info("Processamento de cache concluído com sucesso!")
 
@@ -54,7 +69,7 @@ class MessageSender:
         media_id = await self.whatsapp._upload_media(image_bytes, "image/png")
         await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
         
-        logger.info(f"Resolução enviada para {phone}: {image_path}")
+        logger.info(f"Imagem local enviada para {phone}: {image_path}")
 
     async def send_question_image(
         self,
@@ -67,7 +82,7 @@ class MessageSender:
     ) -> None:
         start_time = time.time()
         outbox.add_image(phone, caption, caption=caption)
-        logger.info("OUT [%s] image: %s", phone, caption)
+        logger.info("OUT [%s] question image: %s", phone, caption)
         
         if not self.whatsapp.is_configured:
             return
@@ -100,6 +115,44 @@ class MessageSender:
                 new_cache = MediaCache(drive_id=question_id, whatsapp_id=media_id)
                 db.add(new_cache)
                 db.commit()
+
+    async def send_resolution_image(self, phone: str, question_id: str, caption: str = "Aqui está a resolução passo a passo:") -> None:
+        """
+        NOVO MÉTODO: Busca a imagem da resolução no cache ou faz o upload se não existir, e envia.
+        """
+        start_time = time.time()
+        logger.info("OUT [%s] resolution image para a questão: %s", phone, question_id)
+        
+        if not self.whatsapp.is_configured:
+            return
+
+        res_cache_id = f"{question_id}_res"
+
+        # 1. OLHA O CACHE PRIMEIRO (A mágica da performance de 4s acontece aqui)
+        with next(get_db()) as db:
+            cached = db.query(MediaCache).filter(MediaCache.drive_id == res_cache_id).first()
+            if cached:
+                logger.info("LOG TEMPO: Cache DB da Resolução consultado (%.2fs)", time.time() - start_time)
+                await self.whatsapp.send_image_by_id(phone, cached.whatsapp_id, caption=caption)
+                return
+
+        # 2. SE NÃO TEM CACHE, TENTA BAIXAR NA HORA (Fallback caso o warmup tenha falhado)
+        from app.services.question_provider import question_provider
+        image_bytes, mime_type = question_provider.get_resolution_image(question_id)
+
+        if not image_bytes:
+            logger.error(f"Erro: Nenhuma imagem de resolução encontrada para {question_id}.")
+            return
+
+        # 3. FAZ O UPLOAD E ENVIA
+        media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
+        await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
+        
+        # 4. SALVA NO CACHE PARA A PRÓXIMA
+        with next(get_db()) as db:
+            new_cache = MediaCache(drive_id=res_cache_id, whatsapp_id=media_id)
+            db.add(new_cache)
+            db.commit()
 
     async def send_document(
         self, phone: str, file_bytes: bytes, mime_type: str, filename: str, caption: str | None = None,
