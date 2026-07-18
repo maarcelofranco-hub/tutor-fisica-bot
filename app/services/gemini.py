@@ -1,16 +1,11 @@
-import base64
-import json
 import logging
 import re
 import os
 import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
 
 from app.config import settings
 from app.database import SessionLocal, QuestionResolution
 from app.services.resolution_generator import generate_latex_solution
-
-# Importamos o question_provider para o Gemini ler o enunciado real e não inventar respostas
 from app.services.question_provider import question_provider
 
 logger = logging.getLogger(__name__)
@@ -30,24 +25,43 @@ class GeminiService:
 
     async def get_or_create_resolution_image(self, question_id: str) -> str:
         """
-        Gera a resolução em imagem apenas uma vez e salva no banco/tmp.
+        Gera a resolução com custo ZERO em deploys:
+        Se a imagem existe, retorna. Se não, mas o texto existe, regenera localmente!
         """
         db = SessionLocal()
         try:
+            # Caminho consistente para a imagem
+            output_path = f"/tmp/{question_id.split('/')[-1].split('.')[0]}_res.png"
             resolution = db.query(QuestionResolution).filter(QuestionResolution.question_id == question_id).first()
-            if resolution:
-                return resolution.image_url
             
-            # Busca o texto real da questão para enviar ao Gemini
-            enunciado = "Enunciado não encontrado. Resolva baseando-se apenas nos seus conhecimentos."
+            # ========================================================
+            # 🛡️ BLINDAGEM DE TOKENS (CUSTO ZERO NO DEPLOY)
+            # ========================================================
+            if resolution:
+                if os.path.exists(output_path):
+                    return output_path
+                else:
+                    # Foto apagada no deploy? Regenera localmente (sem custo de API!)
+                    logger.info(f"Foto apagada no deploy. Regenerando localmente para: {question_id}")
+                    await generate_latex_solution(
+                        question_id, 
+                        resolution.dados_latex or "Sem dados", 
+                        resolution.resolucao_latex or "Sem resolucao", 
+                        output_path
+                    )
+                    return output_path
+            
+            # ========================================================
+            # GERAÇÃO PELA API (APENAS QUESTÕES NOVAS)
+            # ========================================================
+            enunciado = "Resolva esta questão de física."
+            # Busca enunciado real no question_provider
             for topic in question_provider.list_topics():
                 for q in question_provider.list_questions(topic):
                     if q.id == question_id:
-                        # Pega o texto da questão (ajuste '.name' se o texto completo ficar em outro atributo)
                         enunciado = getattr(q, 'name', '') or getattr(q, 'text', '')
                         break
 
-            # 1. O SUPER PROMPT DE RESOLUÇÃO (Regras estritas de LaTeX)
             prompt = f"""Você é um professor de Física de excelência. Sua tarefa é criar uma resolução passo a passo detalhada e definitiva para a questão fornecida.
 
 REGRAS DE FORMATAÇÃO (MUITO IMPORTANTE):
@@ -68,27 +82,30 @@ RESOLUÇÃO:
 QUESTÃO A SER RESOLVIDA:
 {enunciado}
 """
-            response = self.model.generate_content(prompt)
             
-            # 2. Faz o parsing simples do texto
+            response = self.model.generate_content(prompt)
             text = response.text
+            
             data_match = re.search(r"DADOS:(.*?)(?=RESOLUÇÃO:|$)", text, re.S)
             res_match = re.search(r"RESOLUÇÃO:(.*)", text, re.S)
             
-            # Limpa quebras de linha para evitar buracos na imagem
             data_str = data_match.group(1).strip() if data_match else "Sem dados"
             res_str = res_match.group(1).strip() if res_match else "Sem resolução"
             
-            # 3. Define o caminho e chama o gerador de imagem (Pasta TMP para o Render!)
-            output_path = f"/tmp/{question_id}_res.png"
+            # Gera imagem pela primeira vez
             await generate_latex_solution(question_id, data_str, res_str, output_path)
             
-            # 4. Salva no banco de dados
-            new_resolution = QuestionResolution(question_id=question_id, image_url=output_path)
+            # Salva TEXTO no banco para nunca mais gastar tokens!
+            new_resolution = QuestionResolution(
+                question_id=question_id, 
+                dados_latex=data_str,
+                resolucao_latex=res_str,
+                image_url=output_path
+            )
             db.add(new_resolution)
             db.commit()
             
-            logger.info(f"Nova resolução gerada e salva com sucesso: {output_path}")
+            logger.info(f"Nova resolução gerada (Gemini) e salva com sucesso: {output_path}")
             return output_path
         finally:
             db.close()
@@ -96,6 +113,7 @@ QUESTÃO A SER RESOLVIDA:
     async def extract_text_from_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
         if not self.enabled: return ""
         try:
+            import base64
             response = self.model.generate_content([
                 {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode("utf-8")},
                 "Extraia todo o texto e fórmulas matemáticas desta imagem com precisão."
@@ -106,9 +124,6 @@ QUESTÃO A SER RESOLVIDA:
             return ""
 
     async def correct_answer(self, student_text: str, question_id: str) -> str:
-        """
-        Compara o texto do aluno com a resolução da questão.
-        """
         if not self.enabled: return "Erro: Serviço de correção indisponível."
         
         prompt = self._build_prompt_correction(student_text, question_id)
