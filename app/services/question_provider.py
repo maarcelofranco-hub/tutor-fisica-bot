@@ -116,11 +116,12 @@ class QuestionProvider:
         return "local"
 
     def _provider(self):
-        if self.mode == "drive":
-            self.drive.refresh_cache()
+        # 🚀 REMOVIDO o self.drive.refresh_cache() daqui! 
+        # Agora ele devolve o cache que já está na memória instantaneamente.
         return self.drive if self.mode == "drive" else self.local
 
     def refresh(self) -> None:
+        # O refresh agora só acontece quando for chamado de propósito (ex: na varredura de 6h)
         if self.mode == "drive":
             self.drive.refresh_cache()
 
