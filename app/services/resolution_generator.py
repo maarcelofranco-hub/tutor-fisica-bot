@@ -25,3 +25,10 @@ def generate_two_column_image(data_str, resolution_str, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
+
+# --- ADICIONE ESTA PARTE PARA RESOLVER O ERRO DE IMPORT ---
+async def generate_latex_solution(question_id: str, data_str: str, resolution_str: str, output_path: str):
+    """
+    Função wrapper que o GeminiService espera encontrar.
+    """
+    return generate_two_column_image(data_str, resolution_str, output_path)
