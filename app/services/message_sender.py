@@ -1,5 +1,6 @@
 import logging
 import time
+import os
 from app.config import settings
 from app.services.outbox import outbox
 from app.services.whatsapp import WhatsAppService
@@ -13,8 +14,7 @@ class MessageSender:
 
     async def warm_up_cache_on_whatsapp(self) -> None:
         """
-        Pré-carrega as imagens (questões e resoluções) no cache sem tentar disparar mensagens para telefones inválidos.
-        Isso garante a performance de 4 segundos nas próximas requisições.
+        Pré-carrega as imagens (questões e resoluções) no cache.
         """
         from app.services.question_provider import question_provider
         logger.info("Iniciando processamento de cache (warmup) para questões e resoluções...")
@@ -38,11 +38,17 @@ class MessageSender:
                 # ==========================================
                 # 2. CACHE DA IMAGEM DA RESOLUÇÃO (NOVO)
                 # ==========================================
-                # Assumindo que existe um método get_resolution_image no seu provider
-                res_bytes, res_mime_type = question_provider.get_resolution_image(question.id)
+                # Como o seu resolution_generator salva a imagem no disco, 
+                # vamos ler o ficheiro diretamente.
+                # IMPORTANTE: Ajuste este caminho ('resolucoes') para a pasta correta onde as imagens são salvas!
+                res_path = f"resolucoes/{question.id}.png" 
                 
-                if res_bytes:
-                    res_cache_id = f"{question.id}_res" # Sufixo para não misturar com a questão
+                if os.path.exists(res_path):
+                    with open(res_path, "rb") as f:
+                        res_bytes = f.read()
+                    res_mime_type = "image/png"
+                    
+                    res_cache_id = f"{question.id}_res"
                     with next(get_db()) as db:
                         if not db.query(MediaCache).filter(MediaCache.drive_id == res_cache_id).first():
                             res_media_id = await self.whatsapp._upload_media(res_bytes, res_mime_type)
@@ -50,6 +56,8 @@ class MessageSender:
                             db.add(new_res_cache)
                             db.commit()
                             logger.info(f"Cache populado para a resolução: {question.id}")
+                else:
+                    logger.warning(f"Imagem de resolução não encontrada no disco para warmup: {res_path}")
         
         logger.info("Processamento de cache concluído com sucesso!")
 
@@ -128,7 +136,7 @@ class MessageSender:
 
         res_cache_id = f"{question_id}_res"
 
-        # 1. OLHA O CACHE PRIMEIRO (A mágica da performance de 4s acontece aqui)
+        # 1. OLHA O CACHE PRIMEIRO (Performance)
         with next(get_db()) as db:
             cached = db.query(MediaCache).filter(MediaCache.drive_id == res_cache_id).first()
             if cached:
@@ -136,16 +144,18 @@ class MessageSender:
                 await self.whatsapp.send_image_by_id(phone, cached.whatsapp_id, caption=caption)
                 return
 
-        # 2. SE NÃO TEM CACHE, TENTA BAIXAR NA HORA (Fallback caso o warmup tenha falhado)
-        from app.services.question_provider import question_provider
-        image_bytes, mime_type = question_provider.get_resolution_image(question_id)
-
-        if not image_bytes:
-            logger.error(f"Erro: Nenhuma imagem de resolução encontrada para {question_id}.")
+        # 2. SE NÃO TEM CACHE, TENTA LER DO DISCO NA HORA
+        res_path = f"resolucoes/{question_id}.png"
+        if not os.path.exists(res_path):
+            logger.error(f"Erro: Nenhuma imagem de resolução encontrada em {res_path}.")
             return
+            
+        with open(res_path, "rb") as f:
+            res_bytes = f.read()
+        res_mime_type = "image/png"
 
         # 3. FAZ O UPLOAD E ENVIA
-        media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
+        media_id = await self.whatsapp._upload_media(res_bytes, res_mime_type)
         await self.whatsapp.send_image_by_id(phone, media_id, caption=caption)
         
         # 4. SALVA NO CACHE PARA A PRÓXIMA
