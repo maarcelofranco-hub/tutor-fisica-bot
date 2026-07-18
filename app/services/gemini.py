@@ -35,13 +35,27 @@ class GeminiService:
             if resolution:
                 return resolution.image_url
             
-            # Se não existe, gera (chamando sua função externa)
-            image_url = await generate_latex_solution(question_id)
+            # 1. Solicita o conteúdo estruturado ao Gemini
+            prompt = f"Gere os dados e os passos (resolução) em LaTeX para a questão {question_id}. Responda estritamente neste formato:\nDADOS:\n[seus dados aqui]\nRESOLUÇÃO:\n[seus passos aqui]"
+            response = self.model.generate_content(prompt)
             
-            new_resolution = QuestionResolution(question_id=question_id, image_url=image_url)
+            # 2. Faz o parsing simples do texto
+            text = response.text
+            data_match = re.search(r"DADOS:(.*?)(?=RESOLUÇÃO:|$)", text, re.S)
+            res_match = re.search(r"RESOLUÇÃO:(.*)", text, re.S)
+            
+            data_str = data_match.group(1).strip() if data_match else "Sem dados"
+            res_str = res_match.group(1).strip() if res_match else "Sem resolução"
+            
+            # 3. Define o caminho e chama o gerador com os 4 argumentos exigidos
+            output_path = f"static/resolutions/{question_id}.png"
+            await generate_latex_solution(question_id, data_str, res_str, output_path)
+            
+            # 4. Salva no banco de dados
+            new_resolution = QuestionResolution(question_id=question_id, image_url=output_path)
             db.add(new_resolution)
             db.commit()
-            return image_url
+            return output_path
         finally:
             db.close()
 
@@ -63,7 +77,6 @@ class GeminiService:
         """
         if not self.enabled: return "Erro: Serviço de correção indisponível."
         
-        # Aqui o Gemini atua como professor, comparando o que o aluno escreveu
         prompt = self._build_prompt_correction(student_text, question_id)
         try:
             response = self.model.generate_content(prompt)
@@ -81,5 +94,4 @@ class GeminiService:
         """
 
     def _format_feedback(self, text: str) -> str:
-        # Ajustes de formatação se necessário
         return text.strip()
