@@ -13,17 +13,30 @@ class MessageSender:
 
     async def warm_up_cache_on_whatsapp(self) -> None:
         """
-        Pré-carrega as imagens no cache para garantir os 4 segundos de resposta.
+        Pré-carrega as imagens no cache sem tentar disparar mensagens para telefones inválidos.
+        Isso garante a performance de 4 segundos nas próximas requisições.
         """
         from app.services.question_provider import question_provider
-        logger.info("Iniciando pré-carregamento (warmup) de imagens...")
+        logger.info("Iniciando processamento de cache (warmup)...")
         
         for topic in question_provider.list_topics():
             for question in question_provider.list_questions(topic):
-                # Forçamos o processamento para preencher o cache do banco
-                await self.send_question_image(phone="00000000000", caption="warmup", question_id=question.id)
+                # 1. Obtém os bytes da imagem
+                image_bytes, mime_type = question_provider.get_question_image(question.id)
+                
+                if image_bytes:
+                    # 2. Faz o upload para obter o media_id
+                    media_id = await self.whatsapp._upload_media(image_bytes, mime_type)
+                    
+                    # 3. Salva no banco de dados para o cache
+                    with next(get_db()) as db:
+                        if not db.query(MediaCache).filter(MediaCache.drive_id == question.id).first():
+                            new_cache = MediaCache(drive_id=question.id, whatsapp_id=media_id)
+                            db.add(new_cache)
+                            db.commit()
+                            logger.info(f"Cache populado para a questão: {question.id}")
         
-        logger.info("Warmup concluído com sucesso!")
+        logger.info("Processamento de cache concluído com sucesso!")
 
     async def send_text(self, phone: str, text: str) -> None:
         outbox.add_text(phone, text)
@@ -59,7 +72,7 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
-        # 1. Tenta pegar do cache (o que garante os 4s)
+        # 1. OLHA O CACHE PRIMEIRO
         if question_id:
             with next(get_db()) as db:
                 cached = db.query(MediaCache).filter(MediaCache.drive_id == question_id).first()
