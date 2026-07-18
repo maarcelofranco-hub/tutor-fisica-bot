@@ -85,14 +85,22 @@ class MessageSender:
             await self.whatsapp.send_document_bytes(phone, file_bytes, mime_type, filename, caption=caption)
 
     async def send_themes_menu(self, phone: str) -> bool:
+        start_menu_time = time.time()
         from app.services.question_provider import question_provider
-        menu_file = question_provider.get_themes_menu_file()
-        if not menu_file: return False
         
+        menu_file = question_provider.get_themes_menu_file()
+        if not menu_file: 
+            logger.error("LATENCIA_ERRO: get_themes_menu_file() retornou None. O arquivo do menu não foi mapeado no provider.")
+            return False
+        
+        logger.info("LOG TEMPO: Iniciando download do arquivo do menu do Drive...")
         file_bytes, mime_type = question_provider.download_file(menu_file.id)
         instruction = "Escolha um tema. Resolva e me envie sua resposta!"
         
         if mime_type.startswith("image/"):
             await self.send_question_image(phone, file_bytes, mime_type, instruction, question_id=menu_file.id)
+            logger.info("LOG TEMPO: Fluxo completo do menu executado em %.2fs", time.time() - start_menu_time)
             return True
+            
+        logger.error("LATENCIA_ERRO: O arquivo do menu foi encontrado, mas o tipo Mime recebido foi '%s' (esperado: image/*)", mime_type)
         return False
