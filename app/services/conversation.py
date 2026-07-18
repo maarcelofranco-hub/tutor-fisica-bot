@@ -94,6 +94,7 @@ class ConversationService:
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
+        # O USO DO QUESTION_ID GARANTE A PERFORMANCE DE 4 SEGUNDOS
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
