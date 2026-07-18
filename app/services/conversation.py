@@ -46,6 +46,31 @@ class ConversationService:
             await self._handle_answer(db, contact, session, message)
             return
 
+    async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
+        """
+        Processa a resolução do aluno e dispara a correção via Gemini.
+        """
+        await self.messages.send_text(contact.phone, "Recebi sua resolução! Estou processando a correção...")
+        
+        try:
+            # Chama o motor de análise (OCR/Gemini)
+            feedback = await self.ocr.analyze(message)
+            await self.messages.send_text(contact.phone, feedback)
+            
+            # Opcional: marca a questão como concluída no progresso
+            if session.current_question_id:
+                new_progress = StudentProgress(
+                    contact_id=contact.id, 
+                    topic=session.current_topic, 
+                    question_id=session.current_question_id
+                )
+                db.add(new_progress)
+                db.commit()
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar resolução: {e}")
+            await self.messages.send_text(contact.phone, "Houve um erro ao analisar sua resposta. Tente novamente.")
+
     async def _send_welcome_message(self, phone: str) -> None:
         msg = (
             "🍎 *Olá! Sou seu tutor de Física.*\n\n"
@@ -94,7 +119,7 @@ class ConversationService:
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
-        # O USO DO QUESTION_ID GARANTE A PERFORMANCE DE 4 SEGUNDOS
+        # Envio pelo ID, mantendo a performance de 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
