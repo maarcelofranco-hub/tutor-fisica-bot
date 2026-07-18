@@ -13,9 +13,6 @@ from app.utils.text import labels_match
 logger = logging.getLogger(__name__)
 
 class ConversationService:
-    YES_WORDS = {"sim", "s", "yes", "quero", "continuar", "outra", "mais"}
-    NO_WORDS = {"nao", "não", "n", "no", "parar", "stop", "outro tema", "trocar"}
-
     def __init__(self) -> None:
         self.messages = MessageSender()
         self.gemini = GeminiService()
@@ -28,7 +25,6 @@ class ConversationService:
 
         contact = self._get_or_create_contact(db, message)
         session = self._get_or_create_session(db, contact)
-        
         msg_text = (message.text or "").lower().strip()
         
         saudacoes = ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "menu", "reset", "inicio", "opa"]
@@ -50,9 +46,6 @@ class ConversationService:
             await self._handle_answer(db, contact, session, message)
             return
 
-        logger.info(f"Entrada '{msg_text}' não reconhecida. Enviando menu proativo.")
-        await self._reset_to_topic_selection(db, session)
-
     async def _send_welcome_message(self, phone: str) -> None:
         msg = (
             "🍎 *Olá! Sou seu tutor de Física.*\n\n"
@@ -63,7 +56,6 @@ class ConversationService:
             "Qual tema você quer estudar agora?"
         )
         await self.messages.send_text(phone, msg)
-        await self._send_topic_menu(phone)
 
     async def _send_topic_menu(self, phone: str) -> None:
         temas = self.questions.list_topics()
@@ -95,37 +87,14 @@ class ConversationService:
             await self.messages.send_text(contact.phone, "Desculpe, não encontrei esse tema. Por favor, escolha um tema da lista abaixo:")
             await self._send_topic_menu(contact.phone)
 
-    async def _handle_answer(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
-        # Lógica de correção (mantida intacta)
-        if not session.current_question_id:
-            await self._reset_to_topic_selection(db, session)
-            return
-        
-        # ... (sua lógica de OCR e Gemini aqui) ...
-        # (Nota: mantive a estrutura para você apenas copiar o conteúdo original nesta parte)
-        
-        # Exemplo rápido para não interromper:
-        await self.messages.send_text(contact.phone, "Processando...")
-        await self._send_next_question(db, contact, session)
-
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
         if not topic: return False
-        
-        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(
-            StudentProgress.contact_id == contact.id, 
-            StudentProgress.topic == topic
-        )}
-        
+        answered_ids = {row.question_id for row in db.query(StudentProgress).filter(StudentProgress.contact_id == contact.id, StudentProgress.topic == topic)}
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
-        # O uso do question_id garante a performance (4 segundos) que você configurou
-        await self.messages.send_question_image(
-            phone=contact.phone, 
-            caption=next_question.name, 
-            question_id=next_question.id
-        )
+        await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
         session.current_question_name = next_question.name
@@ -134,7 +103,6 @@ class ConversationService:
         return True
 
     def _get_or_create_contact(self, db: Session, message: IncomingMessage) -> Contact:
-        # CORREÇÃO: Removido parâmetro inexistente 'name'
         contact = db.query(Contact).filter(Contact.phone == message.phone).one_or_none()
         if not contact:
             contact = Contact(phone=message.phone)
@@ -159,5 +127,3 @@ class ConversationService:
     def _looks_like_topic(self, text: str | None) -> bool:
         if not text: return False
         return any(labels_match(item, text) for item in self.questions.list_topics())
-
-conversation_service = ConversationService()
