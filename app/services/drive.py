@@ -44,17 +44,22 @@ class DriveService:
     def _build_service(self):
         credentials = self._load_service_account_credentials()
         if not credentials:
-            logger.error("Falha ao carregar credenciais da Service Account. Verifique seu .env!")
+            logger.error("Falha ao carregar credenciais da Service Account.")
             return None
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     def _load_service_account_credentials(self):
-        if settings.google_service_account_json and settings.google_service_account_json.strip():
+        # Caminho fixo onde o arquivo está mapeado no container
+        file_path = "/app/credentials/service-account.json"
+        
+        if os.path.exists(file_path):
             try:
-                info = json.loads(settings.google_service_account_json)
-                return service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+                logger.info(f"Carregando credenciais do arquivo: {file_path}")
+                return service_account.Credentials.from_service_account_file(file_path, scopes=DRIVE_SCOPES)
             except Exception as e:
-                logger.error("Erro ao processar JSON da Service Account: %s", e)
+                logger.error("Erro ao carregar arquivo de credenciais: %s", e)
+        else:
+            logger.error(f"Arquivo de credenciais não encontrado em: {file_path}")
         return None
 
     def list_topics(self) -> list[str]:
