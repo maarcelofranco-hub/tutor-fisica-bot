@@ -37,6 +37,12 @@ class DriveService:
         self._questions_cache: dict[str, list[Question]] = {}
         self._menu_file_cache: DriveFile | None = None
 
+    def refresh_cache(self) -> None:
+        """Limpa o cache de temas e força a recarga."""
+        self._topics_cache = None
+        self._questions_cache = {}
+        self.list_topics()
+
     @property
     def is_configured(self) -> bool:
         return self.service is not None and bool(self.root_folder_id)
