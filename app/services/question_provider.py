@@ -126,7 +126,7 @@ class QuestionProvider:
         if self.mode == "drive":
             self.drive.refresh_cache()
 
-        # 2. GATILHO MÁGICO DO GEMINI: Cria as resoluções em background
+        # 2. GATILHO MÁGICO DO GEMINI: Busca as resoluções já existentes
         # Importado aqui dentro para não gerar erro de importação circular
         from app.services.gemini import GeminiService
         import logging
@@ -134,15 +134,15 @@ class QuestionProvider:
         log = logging.getLogger(__name__)
         gemini_service = GeminiService()
         
-        log.info("Iniciando varredura: Checando e pré-gerando resoluções em LaTeX pelo Gemini...")
+        log.info("Iniciando varredura: Buscando resoluções existentes...")
         
         for topic in self.list_topics():
             for question in self.list_questions(topic):
                 try:
-                    # O get_or_create já checa: se existe, ignora; se não, gera!
-                    await gemini_service.get_or_create_resolution_image(question.id)
+                    # Busca a resolução existente em vez de tentar criar
+                    await gemini_service.get_resolution_image(question.id)
                 except Exception as e:
-                    log.error(f"Erro ao pré-gerar resolução para {question.id}: {e}")
+                    log.error(f"Erro ao buscar resolução para {question.id}: {e}")
                     
         log.info("Varredura de resoluções concluída com sucesso!")
 
