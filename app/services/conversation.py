@@ -46,6 +46,11 @@ class ConversationService:
                 return
             await self._handle_answer(db, contact, session, message)
             return
+            
+        # NOVA ROTA: Aguardando se o aluno quer a próxima questão ou tem dúvida
+        if session.state == "AWAITING_NEXT_ACTION":
+            await self._handle_next_action(db, contact, session, message)
+            return
 
     async def _send_welcome_message(self, phone: str) -> None:
         msg = (
@@ -57,7 +62,6 @@ class ConversationService:
             "Qual tema você quer estudar agora?"
         )
         await self.messages.send_text(phone, msg)
-        # Menu removido daqui para não duplicar na saudação
 
     async def _send_topic_menu(self, phone: str) -> None:
         temas = self.questions.list_topics()
@@ -100,24 +104,22 @@ class ConversationService:
             await self._reset_to_topic_selection(db, session)
             return
         
-        # 1. Feedback imediato de engajamento
-        await self.messages.send_text(contact.phone, "Recebi sua resolução! Analisando...")
-        
         try:
-            # 2. Processa a resposta via Gemini
-            analise_texto = await self.ocr.process_answer(message, session.current_question_id)
-            
-            # 3. Envia a foto da resolução em LaTeX já carregada no banco
-            # Certifique-se de que o método 'send_resolution_image' existe no seu MessageSender
+            # 1. Envia a foto da resolução oficial IMEDIATAMENTE (Sem Gemini)
             await self.messages.send_resolution_image(
                 phone=contact.phone, 
                 question_id=session.current_question_id
             )
             
-            # 4. Envia a análise comparativa gerada pelo Gemini
-            await self.messages.send_text(contact.phone, analise_texto)
+            # 2. Envia o menu perguntando o próximo passo (Sintaxe segura em aspas triplas)
+            menu_text = """📝 *Resolução Oficial:*
 
-            # 5. Salva o progresso para garantir que a questão não se repita
+O que deseja fazer agora?
+👉 Digite *sim* para a próxima questão
+👉 Envie *dúvidas* para uma explicação detalhada"""
+            await self.messages.send_text(contact.phone, menu_text)
+
+            # 3. Salva o progresso para não repetir a questão
             progress = StudentProgress(
                 contact_id=contact.id,
                 topic=session.current_topic,
@@ -125,18 +127,41 @@ class ConversationService:
                 is_correct=True
             )
             db.add(progress)
-            db.commit()
 
-            # 6. Avança para a próxima questão
+            # 4. Muda o estado para aguardar a decisão ("sim" ou "dúvida")
+            session.state = "AWAITING_NEXT_ACTION"
+            db.commit()
+                
+        except Exception as e:
+            logger.error(f"Erro ao processar resposta: {e}")
+            await self.messages.send_text(contact.phone, "Ocorreu um erro ao buscar a resolução. Tente novamente.")
+
+    async def _handle_next_action(self, db: Session, contact: Contact, session: StudentSession, message: IncomingMessage) -> None:
+        texto = (message.text or "").strip().lower()
+        
+        # Se o aluno quiser avançar
+        if texto in ["sim", "s", "proxima", "próxima"]:
             success = await self._send_next_question(db, contact, session)
-            
             if not success:
                 await self.messages.send_text(contact.phone, "Parabéns! Você completou todas as questões deste tema.")
                 await self._reset_to_topic_selection(db, session)
                 
-        except Exception as e:
-            logger.error(f"Erro ao processar resposta: {e}")
-            await self.messages.send_text(contact.phone, "Não consegui processar a imagem. Tente novamente.")
+        # Se o aluno tiver dúvidas (AQUI ACIONA O GEMINI)
+        elif "duvida" in texto or "dúvida" in texto or "duvidas" in texto:
+            await self.messages.send_text(contact.phone, "Certo! O professor IA está analisando a questão para te explicar...")
+            try:
+                # Aciona o Gemini para processar a dúvida sobre a questão atual
+                analise_texto = await self.ocr.process_answer(message, session.current_question_id)
+                await self.messages.send_text(contact.phone, analise_texto)
+            except Exception as e:
+                logger.error(f"Erro no Gemini: {e}")
+                await self.messages.send_text(contact.phone, "Tive um problema ao processar sua dúvida.")
+            
+            # Repete a pergunta para ele não ficar preso
+            await self.messages.send_text(contact.phone, "👉 Digite *sim* para ir para a próxima questão.")
+            
+        else:
+            await self.messages.send_text(contact.phone, "Não entendi. Digite *sim* para a próxima questão ou *dúvidas* para uma explicação.")
 
     async def _send_next_question(self, db: Session, contact: Contact, session: StudentSession) -> bool:
         topic = session.current_topic
@@ -145,7 +170,6 @@ class ConversationService:
         next_question = next((q for q in self.questions.list_questions(topic) if q.id not in answered_ids), None)
         if not next_question: return False
         
-        # PERFORMANCE: Envio via ID mantém os 4 segundos
         await self.messages.send_question_image(phone=contact.phone, caption=next_question.name, question_id=next_question.id)
         
         session.current_question_id = next_question.id
