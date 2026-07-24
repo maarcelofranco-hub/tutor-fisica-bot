@@ -1,6 +1,8 @@
 import logging
 import time
 import os
+import re
+import unicodedata
 from app.config import settings
 from app.services.outbox import outbox
 from app.services.whatsapp import WhatsAppService
@@ -14,10 +16,10 @@ class MessageSender:
 
     async def warm_up_cache_on_whatsapp(self) -> None:
         """
-        Pré-carrega as imagens (questões e resoluções) no cache.
+        Pré-carrega as imagens (questões) no cache.
         """
         from app.services.question_provider import question_provider
-        logger.info("Iniciando processamento de cache (warmup) para questões e resoluções...")
+        logger.info("Iniciando processamento de cache (warmup) para questões...")
         
         for topic in question_provider.list_topics():
             for question in question_provider.list_questions(topic):
@@ -35,31 +37,7 @@ class MessageSender:
                             db.commit()
                             logger.info(f"Cache populado para a questão: {question.id}")
 
-                # ==========================================
-                # 2. CACHE DA IMAGEM DA RESOLUÇÃO (NOVO)
-                # ==========================================
-                # Como o seu resolution_generator salva a imagem no disco, 
-                # vamos ler o ficheiro diretamente.
-                # IMPORTANTE: Ajuste este caminho ('resolucoes') para a pasta correta onde as imagens são salvas!
-                res_path = f"resolucoes/{question.id}.png" 
-                
-                if os.path.exists(res_path):
-                    with open(res_path, "rb") as f:
-                        res_bytes = f.read()
-                    res_mime_type = "image/png"
-                    
-                    res_cache_id = f"{question.id}_res"
-                    with next(get_db()) as db:
-                        if not db.query(MediaCache).filter(MediaCache.drive_id == res_cache_id).first():
-                            res_media_id = await self.whatsapp._upload_media(res_bytes, res_mime_type)
-                            new_res_cache = MediaCache(drive_id=res_cache_id, whatsapp_id=res_media_id)
-                            db.add(new_res_cache)
-                            db.commit()
-                            logger.info(f"Cache populado para a resolução: {question.id}")
-                else:
-                    logger.warning(f"Imagem de resolução não encontrada no disco para warmup: {res_path}")
-        
-        logger.info("Processamento de cache concluído com sucesso!")
+        logger.info("Processamento de cache de questões concluído!")
 
     async def send_text(self, phone: str, text: str) -> None:
         outbox.add_text(phone, text)
@@ -124,9 +102,9 @@ class MessageSender:
                 db.add(new_cache)
                 db.commit()
 
-    async def send_resolution_image(self, phone: str, question_id: str, caption: str = "Aqui está a resolução passo a passo:") -> None:
+    async def send_resolution_image(self, phone: str, question_id: str, caption: str = "") -> None:
         """
-        NOVO MÉTODO: Busca a imagem da resolução no cache ou faz o upload se não existir, e envia.
+        Busca a imagem da resolução correspondente à questão (mesmo número) no Drive.
         """
         start_time = time.time()
         logger.info("OUT [%s] resolution image para a questão: %s", phone, question_id)
@@ -134,6 +112,7 @@ class MessageSender:
         if not self.whatsapp.is_configured:
             return
 
+        # Usamos o question_id + "_res" como chave de cache para a resolução
         res_cache_id = f"{question_id}_res"
 
         # 1. OLHA O CACHE PRIMEIRO (Performance)
@@ -144,15 +123,50 @@ class MessageSender:
                 await self.whatsapp.send_image_by_id(phone, cached.whatsapp_id, caption=caption)
                 return
 
-        # 2. SE NÃO TEM CACHE, TENTA LER DO DISCO NA HORA
-        res_path = f"resolucoes/{question_id}.png"
-        if not os.path.exists(res_path):
-            logger.error(f"Erro: Nenhuma imagem de resolução encontrada em {res_path}.")
+        # 2. INTELIGÊNCIA: ACHAR A RESOLUÇÃO CORRESPONDENTE NO DRIVE
+        from app.services.question_provider import question_provider
+        
+        # Acessamos o _provider() direto para pular o filtro que esconde as resoluções
+        provider = question_provider._provider()
+        target_q = None
+        target_topic = None
+        
+        # Descobrir o nome e o tópico da questão atual
+        for topic in provider.list_topics():
+            for q in provider.list_questions(topic):
+                if q.id == question_id:
+                    target_q = q
+                    target_topic = topic
+                    break
+            if target_q:
+                break
+                
+        if not target_q:
+            logger.error("Erro: Questão original não encontrada no Drive.")
             return
             
-        with open(res_path, "rb") as f:
-            res_bytes = f.read()
-        res_mime_type = "image/png"
+        # Extrai o número do nome (Ex: "Questao1.jpg" -> "1")
+        numbers = re.findall(r'\d+', target_q.name)
+        if not numbers:
+            logger.error(f"Erro: Não encontrei número no nome da questão {target_q.name}")
+            return
+        q_num = numbers[0]
+        
+        # Procura no mesmo tópico a resolução com o mesmo número
+        resolucao_file = None
+        for f in provider.list_questions(target_topic):
+            name_norm = ''.join(c for c in unicodedata.normalize('NFD', f.name) if unicodedata.category(c) != 'Mn').lower()
+            # Busca por "resoluca" ou "reoluca" (caso haja erro de digitação) + o número da questão
+            if ("resoluca" in name_norm or "reoluca" in name_norm) and q_num in name_norm:
+                resolucao_file = f
+                break
+                
+        if not resolucao_file:
+            logger.error(f"Erro: Imagem de resolução não encontrada para a questão {target_q.name}")
+            return
+            
+        # Baixa a imagem da resolução oficial do Drive/Pasta
+        res_bytes, res_mime_type = provider.get_question_image(resolucao_file.id)
 
         # 3. FAZ O UPLOAD E ENVIA
         media_id = await self.whatsapp._upload_media(res_bytes, res_mime_type)
