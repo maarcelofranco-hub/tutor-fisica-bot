@@ -1,5 +1,6 @@
 import logging
 import mimetypes
+import unicodedata
 from pathlib import Path
 
 from app.config import settings
@@ -110,7 +111,6 @@ class QuestionProvider:
                 logger.warning("QUESTION_SOURCE=drive but Drive is not configured; falling back to local")
                 return "local"
             return "drive"
-        # auto: prefer live Google Drive when configured (independent mode)
         if self.drive.is_configured:
             return "drive"
         return "local"
@@ -118,39 +118,27 @@ class QuestionProvider:
     def _provider(self):
         return self.drive if self.mode == "drive" else self.local
 
-    # ==============================================================
-    # 🎯 AQUI ESTÁ A MÁGICA: O REFRESH AGORA É ASSÍNCRONO E CHAMA O GEMINI
-    # ==============================================================
     async def refresh(self) -> None:
-        # 1. Atualiza o cache do Google Drive (baixa as fotos novas)
+        # 1. Atualiza apenas o cache do Drive (Baixa novas fotos que você colocar na pasta)
         if self.mode == "drive":
             self.drive.refresh_cache()
-
-        # 2. GATILHO MÁGICO DO GEMINI: Busca as resoluções já existentes
-        # Importado aqui dentro para não gerar erro de importação circular
-        from app.services.gemini import GeminiService
-        import logging
-        
-        log = logging.getLogger(__name__)
-        gemini_service = GeminiService()
-        
-        log.info("Iniciando varredura: Buscando resoluções existentes...")
-        
-        for topic in self.list_topics():
-            for question in self.list_questions(topic):
-                try:
-                    # Busca a resolução existente em vez de tentar criar
-                    await gemini_service.get_resolution_image(question.id)
-                except Exception as e:
-                    log.error(f"Erro ao buscar resolução para {question.id}: {e}")
-                    
-        log.info("Varredura de resoluções concluída com sucesso!")
+        # GEMINI REMOVIDO DAQUI DEFINITIVAMENTE PARA NÃO GASTAR TOKENS
 
     def list_topics(self) -> list[str]:
         return self._provider().list_topics()
 
     def list_questions(self, topic: str) -> list[Question]:
-        return self._provider().list_questions(topic)
+        # 2. FILTRO: Remove as resoluções da lista de perguntas!
+        all_files = self._provider().list_questions(topic)
+        questions = []
+        
+        for f in all_files:
+            name_normalized = ''.join(c for c in unicodedata.normalize('NFD', f.name) if unicodedata.category(c) != 'Mn').lower()
+            # Só adiciona na lista de exercícios se NÃO tiver "resolucao" no nome
+            if "resolucao" not in name_normalized:
+                questions.append(f)
+                
+        return questions
 
     def get_question_image(self, question_id: str) -> tuple[bytes, str]:
         return self._provider().get_question_image(question_id)
@@ -171,6 +159,5 @@ class QuestionProvider:
             if labels_match(name, topic):
                 return name
         return topic.strip()
-
 
 question_provider = QuestionProvider()
